@@ -1,0 +1,14 @@
+# Flight Route Visualization Tool Dependencies
+# Data processing
+pandas>=1.5.0
+openpyxl>=3.0.0
+
+# Web framework
+streamlit>=1.28.0
+streamlit-folium>=0.15.0
+
+# Map visualization
+folium>=0.14.0
+
+# Other tools
+numpy>=1.24.0
