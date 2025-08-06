@@ -46,6 +46,24 @@ Thumbs.db
 # Logs
 *.log
 
+# Streamlit secrets (包含API密钥)
+.streamlit/secrets.toml
+.streamlit/config.toml
+
+# 环境变量文件
+.env
+.env.local
+.env.production
+
+# API密钥和配置文件
+config/secrets.json
+config/api_keys.json
+
+# 临时和缓存文件
+*.tmp
+*.cache
+.pytest_cache/
+
 # Data files (可选择性忽略)
 # data/*.csv
 # data/*.xlsx

@@ -6,11 +6,16 @@ from parser import load_data
 from data_cleaner import clean_route_data, get_sorted_cities, print_data_summary, categorize_city
 from airport_coords import get_airport_coords
 from static_manager import resource_manager
+from map3d_integration import render_3d_map, create_3d_control_panel, get_3d_map_stats
+from optimized_map3d_integration import render_optimized_3d_map
+from fix_console_errors import apply_all_fixes
 import os
 import pandas as pd
 import math
 import numpy as np
 from geopy.distance import geodesic
+
+apply_all_fixes()
 
 # 配置Folium使用本地图标，避免CDN加载错误
 os.environ['FOLIUM_ICON_PATH'] = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
@@ -47,12 +52,29 @@ def calculate_flight_distance(origin_coords, dest_coords):
         距离（公里）
     """
     try:
-        if origin_coords and dest_coords and len(origin_coords) == 2 and len(dest_coords) == 2:
-            distance = geodesic(origin_coords, dest_coords).kilometers
+        # 验证坐标格式
+        if not (origin_coords and dest_coords and 
+                len(origin_coords) == 2 and len(dest_coords) == 2):
+            return None
+            
+        # 验证坐标数值有效性
+        for coord_pair in [origin_coords, dest_coords]:
+            lat, lon = coord_pair
+            # 检查是否为有限数值
+            if not (math.isfinite(lat) and math.isfinite(lon)):
+                return None
+            # 检查经纬度范围
+            if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                return None
+                
+        distance = geodesic(origin_coords, dest_coords).kilometers
+        # 验证计算结果
+        if math.isfinite(distance) and distance >= 0:
             return round(distance, 0)
-    except:
-        pass
-    return None
+        return None
+    except Exception as e:
+        print(f"计算飞行距离时出错: {e}")
+        return None
 
 def categorize_city(city_name):
     """
@@ -131,7 +153,8 @@ def calculate_flight_time(distance_km, aircraft_type=''):
         飞行时间（小时:分钟格式）
     """
     try:
-        if not distance_km or distance_km <= 0:
+        # 验证距离数值有效性
+        if not distance_km or not math.isfinite(distance_km) or distance_km <= 0:
             return None
         
         # 根据机型设置平均速度（公里/小时）
@@ -154,21 +177,31 @@ def calculate_flight_time(distance_km, aircraft_type=''):
         
         # 查找匹配的机型速度
         speed = default_speed
-        aircraft_upper = aircraft_type.upper()
-        for model, model_speed in aircraft_speeds.items():
-            if model in aircraft_upper:
-                speed = model_speed
-                break
+        if aircraft_type:
+            aircraft_upper = str(aircraft_type).upper()
+            for model, model_speed in aircraft_speeds.items():
+                if model in aircraft_upper:
+                    speed = model_speed
+                    break
         
         # 计算飞行时间（小时）
         flight_hours = distance_km / speed
         
-        # 转换为小时:分钟格式
+        # 验证计算结果
+        if not math.isfinite(flight_hours) or flight_hours <= 0:
+            return None
+        
+        # 转换为小时h分钟m格式
         hours = int(flight_hours)
         minutes = int((flight_hours - hours) * 60)
         
-        return f"{hours}:{minutes:02d}"
-    except:
+        # 验证最终结果
+        if hours < 0 or minutes < 0 or hours > 24:  # 超过24小时的飞行时间不太现实
+            return None
+            
+        return f"{hours}h{minutes:02d}m"
+    except Exception as e:
+        print(f"计算飞行时间时出错: {e}")
         return None
 
 def generate_realistic_flight_path(start_coords, end_coords, num_points=20):
@@ -228,42 +261,58 @@ def generate_realistic_flight_path(start_coords, end_coords, num_points=20):
         
         if is_transpacific:
             # 跨太平洋航线：使用大圆路径，但考虑实际飞行路径
-            # 计算中间点（大圆路径）
-            A = math.sin((1-t) * math.acos(math.sin(lat1_rad) * math.sin(lat2_rad) + 
-                                          math.cos(lat1_rad) * math.cos(lat2_rad) * math.cos(delta_lon))) / \
-                math.sin(math.acos(math.sin(lat1_rad) * math.sin(lat2_rad) + 
-                                  math.cos(lat1_rad) * math.cos(lat2_rad) * math.cos(delta_lon)))
-            
-            B = math.sin(t * math.acos(math.sin(lat1_rad) * math.sin(lat2_rad) + 
-                                      math.cos(lat1_rad) * math.cos(lat2_rad) * math.cos(delta_lon))) / \
-                math.sin(math.acos(math.sin(lat1_rad) * math.sin(lat2_rad) + 
-                                  math.cos(lat1_rad) * math.cos(lat2_rad) * math.cos(delta_lon)))
-            
             try:
-                x = A * math.cos(lat1_rad) * math.cos(lon1_rad) + B * math.cos(lat2_rad) * math.cos(lon2_rad)
-                y = A * math.cos(lat1_rad) * math.sin(lon1_rad) + B * math.cos(lat2_rad) * math.sin(lon2_rad)
-                z = A * math.sin(lat1_rad) + B * math.sin(lat2_rad)
+                # 计算球面距离的余弦值，确保在有效范围内
+                cos_d = math.sin(lat1_rad) * math.sin(lat2_rad) + math.cos(lat1_rad) * math.cos(lat2_rad) * math.cos(delta_lon)
+                cos_d = max(-1.0, min(1.0, cos_d))  # 限制在[-1, 1]范围内
                 
-                lat = math.atan2(z, math.sqrt(x*x + y*y))
-                lon = math.atan2(y, x)
+                d = math.acos(cos_d)  # 球面距离
                 
-                # 转换回度数
-                lat_deg = math.degrees(lat)
-                lon_deg = math.degrees(lon)
+                # 如果距离太小，使用线性插值
+                if d < 1e-6:
+                    lat = lat1 + t * (lat2 - lat1)
+                    lon = lon1 + t * delta_lon / math.pi * 180
+                else:
+                    sin_d = math.sin(d)
+                    A = math.sin((1-t) * d) / sin_d
+                    B = math.sin(t * d) / sin_d
+                    
+                    x = A * math.cos(lat1_rad) * math.cos(lon1_rad) + B * math.cos(lat2_rad) * math.cos(lon2_rad)
+                    y = A * math.cos(lat1_rad) * math.sin(lon1_rad) + B * math.cos(lat2_rad) * math.sin(lon2_rad)
+                    z = A * math.sin(lat1_rad) + B * math.sin(lat2_rad)
+                    
+                    # 确保计算结果有效
+                    norm = math.sqrt(x*x + y*y + z*z)
+                    if norm > 0:
+                        x, y, z = x/norm, y/norm, z/norm
+                    
+                    lat = math.atan2(z, math.sqrt(x*x + y*y))
+                    lon = math.atan2(y, x)
+                    
+                    # 转换回度数
+                    lat_deg = math.degrees(lat)
+                    lon_deg = math.degrees(lon)
+                    
+                    # 确保坐标在有效范围内
+                    lat_deg = max(-90, min(90, lat_deg))
+                    if lon_deg > 180:
+                        lon_deg -= 360
+                    elif lon_deg < -180:
+                        lon_deg += 360
                 
-                # 确保经度在正确范围内
-                if lon_deg > 180:
-                    lon_deg -= 360
-                elif lon_deg < -180:
-                    lon_deg += 360
+                # 验证坐标有效性
+                if not (math.isfinite(lat_deg) and math.isfinite(lon_deg)):
+                    raise ValueError("Invalid coordinates")
                     
                 path_points.append([lat_deg, lon_deg])
-            except:
+                
+            except Exception as e:
                 # 如果大圆计算失败，回退到线性插值
                 lat = lat1 + t * (lat2 - lat1)
                 lon = lon1 + t * delta_lon / math.pi * 180
                 
-                # 处理跨越国际日期变更线的情况
+                # 确保坐标在有效范围内
+                lat = max(-90, min(90, lat))
                 if lon > 180:
                     lon -= 360
                 elif lon < -180:
@@ -281,7 +330,7 @@ def generate_realistic_flight_path(start_coords, end_coords, num_points=20):
 
 def generate_straight_path(start_coords, end_coords, num_points=10):
     """
-    生成两点间的直线路径（保留原函数作为备用）
+    生成两点间的直线路径，正确处理跨越180度经线的情况
     
     Args:
         start_coords: 起点坐标 [lat, lon]
@@ -294,6 +343,15 @@ def generate_straight_path(start_coords, end_coords, num_points=10):
     lat1, lon1 = start_coords
     lat2, lon2 = end_coords
     
+    # 处理跨越180度经线的情况
+    lon_diff = lon2 - lon1
+    if abs(lon_diff) > 180:
+        # 选择较短的路径
+        if lon_diff > 0:
+            lon2 -= 360
+        else:
+            lon2 += 360
+    
     # 生成直线路径
     path_points = []
     for i in range(num_points + 1):
@@ -302,6 +360,12 @@ def generate_straight_path(start_coords, end_coords, num_points=10):
         # 线性插值公式
         lat = lat1 + t * (lat2 - lat1)
         lon = lon1 + t * (lon2 - lon1)
+        
+        # 确保经度在-180到180范围内
+        if lon > 180:
+            lon -= 360
+        elif lon < -180:
+            lon += 360
         
         path_points.append([lat, lon])
     
@@ -412,14 +476,9 @@ default_folder = r"D:\flight_tool\data"
 if not os.path.exists(default_folder):
     os.makedirs(default_folder)
 
-# 获取默认文件列表
-default_files = []
-if os.path.exists(default_folder):
-    default_files = [
-        os.path.join(default_folder, f) 
-        for f in os.listdir(default_folder) 
-        if f.endswith(('.xlsx', '.csv'))
-    ]
+# 指定最新的数据文件 - 优先使用integrated_all_data_latest.csv
+integrated_data_file = os.path.join(default_folder, "integrated_all_data_latest.csv")
+backup_data_file = os.path.join(default_folder, "中国十六家货航国际航线.xlsx")
 
 # 处理文件上传
 files_to_load = []
@@ -432,11 +491,16 @@ if uploaded_files:
         files_to_load.append(temp_path)
     st.sidebar.success(f"已上传 {len(uploaded_files)} 个文件")
 else:
-    files_to_load = default_files
-    if default_files:
-        st.sidebar.info(f"使用默认数据文件 ({len(default_files)} 个)")
+    # 优先使用最新的integrated数据文件
+    if os.path.exists(integrated_data_file):
+        files_to_load = [integrated_data_file]
+        st.sidebar.info(f"使用最新数据文件: integrated_all_data_latest.csv")
+    elif os.path.exists(backup_data_file):
+        files_to_load = [backup_data_file]
+        st.sidebar.info(f"使用备用数据文件: 中国十六家货航国际航线.xlsx")
     else:
-        st.sidebar.warning("请上传数据文件或在 data 文件夹中放置文件")
+        st.sidebar.error(f"未找到数据文件")
+        st.sidebar.warning("请确保文件存在或上传新的数据文件")
 
 # 数据处理选项
 st.sidebar.subheader("📊 数据处理选项")
@@ -450,29 +514,17 @@ enable_deduplication = st.sidebar.checkbox(
 if files_to_load:
     try:
         with st.spinner("正在加载数据..."):
-            # 检查是否有大陆航司全货机航线.xlsx文件
-            excel_file = None
-            for file_path in files_to_load:
-                if '大陆航司全货机航线.xlsx' in file_path or '大陆航司全货机航线' in os.path.basename(file_path):
-                    excel_file = file_path
-                    break
-            
-            if excel_file:
-                # 使用专用解析函数处理Excel文件
-                from fix_parser import parse_excel_route_data
-                routes_df = parse_excel_route_data(excel_file)
-                
-                # 转换为标准格式
-                if not routes_df.empty:
-                    # 重命名列以匹配系统期望的格式
-                    routes_df = routes_df.rename(columns={
-                        'reg': 'registration',
-                        'aircraft': 'aircraft',
-                        'age': 'age',
-                        'remarks': 'special'
-                    })
+            # 检查文件类型并使用相应的加载方法
+            if len(files_to_load) == 1 and files_to_load[0].endswith('.csv'):
+                # 直接加载CSV文件（integrated_all_data_latest.csv）
+                try:
+                    routes_df = pd.read_csv(files_to_load[0], encoding='utf-8')
+                    st.success(f"成功加载CSV文件，共 {len(routes_df)} 条航线记录")
                     
-                    # 添加缺失的列
+                    # 设置成功加载的文件信息
+                    routes_df.attrs = {'successfully_loaded_files': [os.path.basename(files_to_load[0])]}
+                    
+                    # 添加缺失的列（确保与Excel数据格式一致）
                     if 'flight_number' not in routes_df.columns:
                         routes_df['flight_number'] = ''
                     if 'frequency' not in routes_df.columns:
@@ -481,22 +533,69 @@ if files_to_load:
                         routes_df['flight_time'] = ''
                     if 'flight_distance' not in routes_df.columns:
                         routes_df['flight_distance'] = ''
+                    if 'speed' not in routes_df.columns:
+                        routes_df['speed'] = ''
                     
-                    # 重要：对Excel数据也进行清理，添加城市分类字段
-                    routes_df = clean_route_data(routes_df, enable_deduplication=enable_deduplication)
-                    
-                    # 设置成功加载的文件信息
-                    routes_df.attrs['successfully_loaded_files'] = [os.path.basename(excel_file)]
-                    
-                    st.success(f"成功解析Excel文件，共 {len(routes_df)} 条航线记录")
-                else:
-                    st.error("Excel文件解析失败或无有效航线数据")
+                    # 对CSV数据进行清理（如果需要）
+                    if enable_deduplication:
+                        routes_df = clean_route_data(routes_df, enable_deduplication=enable_deduplication)
+                        
+                except Exception as e:
+                    st.error(f"CSV文件加载失败: {str(e)}")
                     routes_df = pd.DataFrame()
             else:
-                # 使用原有的加载逻辑
-                routes_df = load_data(files_to_load)
-                # 清理数据
-                routes_df = clean_route_data(routes_df, enable_deduplication=enable_deduplication)
+                # 检查是否有中国十六家货航国际航线.xlsx文件
+                excel_file = None
+                for file_path in files_to_load:
+                    if '中国十六家货航国际航线.xlsx' in file_path or '中国十六家货航国际航线' in os.path.basename(file_path):
+                        excel_file = file_path
+                        break
+                
+                if excel_file:
+                    # 检查是否为十六家货航文件，使用对应的解析函数
+                    if '中国十六家货航国际航线' in os.path.basename(excel_file):
+                        from parse_sixteen_airlines import parse_sixteen_airlines_excel
+                        routes_df = parse_sixteen_airlines_excel(excel_file)
+                    else:
+                        # 使用原有解析函数处理其他Excel文件
+                        from fix_parser import parse_excel_route_data
+                        routes_df = parse_excel_route_data(excel_file)
+                    
+                    # 转换为标准格式
+                    if not routes_df.empty:
+                        # 重命名列以匹配系统期望的格式
+                        routes_df = routes_df.rename(columns={
+                            'reg': 'registration',
+                            'aircraft': 'aircraft',
+                            'age': 'age',
+                            'remarks': 'special'
+                        })
+                        
+                        # 添加缺失的列
+                        if 'flight_number' not in routes_df.columns:
+                            routes_df['flight_number'] = ''
+                        if 'frequency' not in routes_df.columns:
+                            routes_df['frequency'] = '正常运营'
+                        if 'flight_time' not in routes_df.columns:
+                            routes_df['flight_time'] = ''
+                        if 'flight_distance' not in routes_df.columns:
+                            routes_df['flight_distance'] = ''
+                        
+                        # 重要：对Excel数据也进行清理，添加城市分类字段
+                        routes_df = clean_route_data(routes_df, enable_deduplication=enable_deduplication)
+                        
+                        # 设置成功加载的文件信息
+                        routes_df.attrs['successfully_loaded_files'] = [os.path.basename(excel_file)]
+                        
+                        st.success(f"成功解析Excel文件，共 {len(routes_df)} 条航线记录")
+                    else:
+                        st.error("Excel文件解析失败或无有效航线数据")
+                        routes_df = pd.DataFrame()
+                else:
+                    # 使用原有的加载逻辑
+                    routes_df = load_data(files_to_load)
+                    # 清理数据
+                    routes_df = clean_route_data(routes_df, enable_deduplication=enable_deduplication)
             
             if not routes_df.empty:
                 print_data_summary(routes_df)
@@ -543,6 +642,48 @@ if files_to_load:
                             flight_time = calculate_flight_time(distance_km, row['aircraft'])
                             if flight_time:
                                 routes_df.at[idx, 'flight_time'] = flight_time
+                                
+                                # 计算飞行速度
+                                try:
+                                    # 解析飞行时间（格式：小时:分钟）
+                                    time_parts = flight_time.split(':')
+                                    if len(time_parts) == 2:
+                                        hours = float(time_parts[0])
+                                        minutes = float(time_parts[1])
+                                        total_hours = hours + minutes / 60
+                                        
+                                        if total_hours > 0:
+                                            speed_kmh = distance_km / total_hours
+                                            routes_df.at[idx, 'speed'] = f"{int(speed_kmh)} km/h"
+                                except Exception as e:
+                                    print(f"计算飞行速度时出错: {e}")
+                    
+                    # 如果飞行速度为空但有距离和时间，计算速度
+                    elif (pd.isna(row['speed']) or str(row['speed']).strip() == '') and \
+                         not (pd.isna(row['flight_time']) or str(row['flight_time']).strip() == '') and \
+                         not (pd.isna(row['flight_distance']) or str(row['flight_distance']).strip() == ''):
+                        try:
+                            # 提取距离数值
+                            distance_str = str(row['flight_distance'])
+                            distance_km = None
+                            if '公里' in distance_str:
+                                distance_km = float(distance_str.replace('公里', '').strip())
+                            elif distance_str.replace('.', '').isdigit():
+                                distance_km = float(distance_str)
+                            
+                            # 解析飞行时间
+                            flight_time_str = str(row['flight_time'])
+                            time_parts = flight_time_str.split(':')
+                            if len(time_parts) == 2 and distance_km:
+                                hours = float(time_parts[0])
+                                minutes = float(time_parts[1])
+                                total_hours = hours + minutes / 60
+                                
+                                if total_hours > 0:
+                                    speed_kmh = distance_km / total_hours
+                                    routes_df.at[idx, 'speed'] = f"{int(speed_kmh)} km/h"
+                        except Exception as e:
+                            print(f"计算现有数据飞行速度时出错: {e}")
             
             st.sidebar.success(f"成功加载 {len(routes_df)} 条航线记录")
             
@@ -584,11 +725,33 @@ if files_to_load:
             
             # 侧边栏 - 视图模式选择
             st.sidebar.header("👁️ 视图模式")
-            view_mode = st.sidebar.radio(
-                "选择视图模式",
-                ["标准视图", "往返航线视图"],
-                help="标准视图：显示所有航线\n往返航线视图：将出口和进口航线配对显示"
+            
+            # 初始化会话状态
+            if 'map_type' not in st.session_state:
+                st.session_state.map_type = '2D地图'
+            if 'view_mode' not in st.session_state:
+                st.session_state.view_mode = '标准视图'
+            
+            # 地图类型选择 - 使用会话状态管理
+            map_type = st.sidebar.radio(
+                "地图类型",
+                ["2D地图", "3D地图"],
+                index=0 if st.session_state.map_type == '2D地图' else 1,
+                help="2D地图：传统平面地图\n3D地图：立体航线展示",
+                key='map_type_selector'
             )
+            # 更新会话状态
+            st.session_state.map_type = map_type
+            
+            view_mode = st.sidebar.radio(
+                "数据视图模式",
+                ["标准视图", "往返航线视图"],
+                index=0 if st.session_state.view_mode == '标准视图' else 1,
+                help="标准视图：显示所有航线\n往返航线视图：将出口和进口航线配对显示",
+                key='view_mode_selector'
+            )
+            # 更新会话状态
+            st.session_state.view_mode = view_mode
             
             # 侧边栏 - 筛选条件
             st.sidebar.header("🔍 筛选条件")
@@ -656,6 +819,31 @@ if files_to_load:
                 ]
             )
             
+            # 3D地图控制选项
+            st.sidebar.subheader("🎛️ 3D地图控制")
+            animation_enabled = st.sidebar.checkbox(
+                "启用航线动画", 
+                value=True, 
+                key="3d_animation_enabled",
+                help="为高频航线（≥5班/周）添加动态流动效果"
+            )
+            if animation_enabled:
+                animation_speed = st.sidebar.slider(
+                    "动画速度", 
+                    min_value=500, 
+                    max_value=5000, 
+                    value=2000, 
+                    step=500, 
+                    key="3d_animation_speed",
+                    help="调节动画播放速度（毫秒）"
+                )
+            else:
+                animation_speed = 2000
+                
+            # 将动画设置存储到session_state
+            st.session_state['animation_enabled'] = animation_enabled
+            st.session_state['animation_speed'] = animation_speed
+            
             # 应用筛选条件
             filtered = routes_df.copy()
             if airline != "全部":
@@ -714,10 +902,12 @@ if files_to_load:
                         (filtered["destination_category"] == "国际")
                     ]
             
+            # 初始化往返航线配对变量（确保在所有模式下都可访问）
+            round_trip_pairs = []
+            
             # 处理往返航线视图
             if view_mode == "往返航线视图":
                 # 创建往返航线配对
-                round_trip_pairs = []
                 route_pairs_dict = {}
                 
                 # 按航线对分组
@@ -792,7 +982,7 @@ if files_to_load:
                     st.metric("国内/国际", "0/0")
             
             # 往返航线视图专门展示
-            if view_mode == "往返航线视图" and 'round_trip_pairs' in locals():
+            if view_mode == "往返航线视图":
                 st.subheader("🔄 往返航线配对视图")
                 
                 if round_trip_pairs:
@@ -924,9 +1114,14 @@ if files_to_load:
             st.header("🗺️ 航线地图")
             
             if not filtered.empty:
+                # 注入 Leaflet 图标路径修复脚本
+                apply_all_fixes()
+                
                 # 创建地图（使用美观明亮的瓦片源，强制刷新）
                 import time
-                map_key = f"map_{int(time.time())}"  # 添加时间戳强制刷新
+                # 根据地图类型和数据生成唯一键值
+                data_signature = f"{len(filtered)}_{hash(str(sorted(filtered['origin'].tolist() + filtered['destination'].tolist())))}"
+                map_key = f"map_{map_type}_{data_signature}_{int(time.time())}"
                 
                 m = folium.Map(
                     location=[20.0, 0.0],  # 以0度经线为中心，确保美洲在西半球正确显示
@@ -934,17 +1129,14 @@ if files_to_load:
                     tiles='https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',  # 使用新的稳定CartoDB URL
                     attr='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, &copy; <a href="https://carto.com/attributions">CARTO</a>',
                     prefer_canvas=True,  # 使用Canvas渲染，减少闪烁
-                    max_bounds=True,  # 限制地图边界
+                    max_bounds=False,  # 移除地图边界限制，允许自由移动
                     min_zoom=1,  # 最小缩放级别
                     max_zoom=18,  # 最大缩放级别
-                    world_copy_jump=False,  # 禁用世界地图重复显示
-                    crs='EPSG3857',  # 使用Web墨卡托投影，确保正确的大洲位置
+                    world_copy_jump=True,  # 启用世界地图重复显示，便于跨越180度经线的航线显示
+                    crs='EPSG3857',  # 使用Web墨卡托投影
                     width='100%',  # 地图宽度设置为100%
                     height='800px'  # 地图高度设置为800像素
                 )
-                
-                # 设置地图显示边界，确保美洲在西半球，亚洲在东半球
-                m.fit_bounds([[-60, -180], [75, 180]])  # 调整边界范围，确保大洲位置正确
                 
                 # 添加美观的备用瓦片源（使用稳定的新URL）
                 folium.TileLayer(
@@ -1139,12 +1331,25 @@ if files_to_load:
                     dest_coords = get_airport_coords(row['destination'])
                     
                     # 调试信息：检查坐标获取
-                    print(f"航线: {row['origin']} -> {row['destination']}")
-                    print(f"起点坐标: {origin_coords}, 终点坐标: {dest_coords}")
+                    
                     
                     # 检查坐标是否有效
                     if origin_coords is None or dest_coords is None:
                         print(f"警告：无法获取坐标 - {row['origin']} 或 {row['destination']}")
+                        routes_without_coords += 1
+                        continue
+                    
+                    # 验证坐标数值有效性
+                    def is_valid_coordinate(coords):
+                        if not coords or len(coords) != 2:
+                            return False
+                        lat, lon = coords
+                        return (isinstance(lat, (int, float)) and isinstance(lon, (int, float)) and
+                                math.isfinite(lat) and math.isfinite(lon) and
+                                -90 <= lat <= 90 and -180 <= lon <= 180)
+                    
+                    if not is_valid_coordinate(origin_coords) or not is_valid_coordinate(dest_coords):
+                        print(f"警告：坐标数值无效 - {row['origin']}: {origin_coords}, {row['destination']}: {dest_coords}")
                         routes_without_coords += 1
                         continue
                     
@@ -1178,10 +1383,14 @@ if files_to_load:
                             line_color = '#FFC107'  # 黄色 - 出口
                             route_type = '🌍 国际出口'
                         
-                        # 标识中转航线（经过国内机场的国际航线）
-                        origin_category = categorize_city(row['origin'])
-                        dest_category = categorize_city(row['destination'])
-                        if origin_category == '国内' or dest_category == '国内':
+                        # 标识中转航线（基于数据源中的实际中转信息）
+                        # 检查是否包含中转信息（支持多种分隔符）
+                        transit_separators = ['-', '—', '→', '>']
+                        has_transit = any(
+                            sep in str(row['origin']) or sep in str(row['destination']) 
+                            for sep in transit_separators
+                        )
+                        if has_transit:
                             route_type += ' (含中转)'
                         
                         # 根据航线频率调整线条粗细和透明度
@@ -1254,28 +1463,40 @@ if files_to_load:
                             other_origins = [orig for orig in same_dest_routes if orig != row['origin']][:3]
                             transit_info += f"<p style='margin: 3px 0; font-size: 11px; color: #666;'><b>🛬 {row['destination']} 其他航线:</b> {', '.join(other_origins)}{'...' if len(same_dest_routes) > 4 else ''} →</p>"
                         
+                        # 安全处理弹出框内容，避免特殊字符导致闪退
+                        import html
+                        safe_origin = html.escape(str(row['origin']))
+                        safe_destination = html.escape(str(row['destination']))
+                        safe_main_airline = html.escape(str(main_airline))
+                        safe_aircraft = html.escape(str(row['aircraft']))
+                        safe_route_type = html.escape(str(route_type))
+                        safe_directions = html.escape(' + '.join(directions_list))
+                        safe_airlines = html.escape(', '.join(airlines_list[:3]))
+                        
                         popup_content = f"""
                         <div style='width: 350px; font-family: Arial, sans-serif; line-height: 1.4;'>
                             <h3 style='margin: 0; color: {line_color}; border-bottom: 2px solid {line_color}; padding-bottom: 5px;'>
-                                ✈️ {row['origin']} {direction_indicator} {row['destination']}
+                                ✈️ {safe_origin} {direction_indicator} {safe_destination}
                             </h3>
                             <div style='margin: 10px 0;'>
                                 <div style='margin: 3px 0; padding: 3px 8px; background: {line_color}20; border-radius: 5px; border-left: 3px solid {line_color};'>
-                                    <strong>{route_type}</strong>
+                                    <strong>{safe_route_type}</strong>
                                 </div>
-                                {route_path_info}
-                                <p style='margin: 3px 0;'><b>🏢 主要航司:</b> <span style='color: {line_color};'>{main_airline}</span></p>
+                                <p style='margin: 3px 0;'><b>🏢 主要航司:</b> <span style='color: {line_color};'>{safe_main_airline}</span></p>
                                 <p style='margin: 3px 0;'><b>📊 航班频次:</b> <span style='background: {line_color}; color: white; padding: 2px 6px; border-radius: 3px;'>{frequency} 班</span></p>
-                                <p style='margin: 3px 0;'><b>🔄 运营方向:</b> {' + '.join(directions_list)}</p>
-                                <p style='margin: 3px 0;'><b>🛫 服务航司:</b> {', '.join(airlines_list[:3])}{'...' if len(airlines_list) > 3 else ''}</p>
-                                <p style='margin: 3px 0;'><b>✈️ 机型:</b> {row['aircraft']}</p>
-                                {transit_info}
+                                <p style='margin: 3px 0;'><b>🔄 运营方向:</b> {safe_directions}</p>
+                                <p style='margin: 3px 0;'><b>🛫 服务航司:</b> {safe_airlines}{'...' if len(airlines_list) > 3 else ''}</p>
+                                <p style='margin: 3px 0;'><b>✈️ 机型:</b> {safe_aircraft}</p>
                             </div>
                         </div>
                         """
                         
                         # 添加航线（优化渲染，减少闪烁）
-                        if frequency >= 5:  # 提高动画阈值，减少动画航线数量
+                        # 获取动画控制参数
+                        animation_enabled = st.session_state.get('animation_enabled', True)
+                        animation_speed = st.session_state.get('animation_speed', 2000)
+                        
+                        if frequency >= 5 and animation_enabled:  # 高频航线且启用动画
                             # 高频航线使用动态效果
                             try:
                                 from folium.plugins import AntPath
@@ -1284,11 +1505,11 @@ if files_to_load:
                                     color=line_color,
                                     weight=line_weight,
                                     opacity=line_opacity * 0.6,  # 进一步降低透明度
-                                    delay=2000,  # 大幅减慢动画速度
+                                    delay=animation_speed,  # 使用用户设置的动画速度
                                     dash_array=[15, 25],  # 优化虚线间距
                                     pulse_color=line_color,  # 使用相同颜色减少对比
                                     popup=folium.Popup(popup_content, max_width=350),
-                                    tooltip=f"{route_type} - {row['origin']} → {row['destination']} ({frequency}班)"
+                                    tooltip=f"{route_type} - {row['origin']} → {row['destination']} ({frequency}班) 🎬"
                                 ).add_to(m)
                             except ImportError:
                                 # 回退到静态线条
@@ -1360,53 +1581,164 @@ if files_to_load:
                         
                         routes_added.add(route_key)
                         unique_routes_displayed += 1  # 统计实际显示的唯一航线
+                        
+                        # 添加始发地和目的地标记
+                        # 始发地标记
+                        folium.Marker(
+                            location=origin_coords,
+                            popup=f"🛫 始发地: {row['origin']}",
+                            tooltip=f"🛫 {row['origin']}",
+                            icon=folium.DivIcon(
+                                html=f'<div style="background-color: #28a745; color: white; border-radius: 50%; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">🛫</div>',
+                                icon_size=(20, 20),
+                                icon_anchor=(10, 10)
+                            )
+                        ).add_to(m)
+                        
+                        # 目的地标记
+                        folium.Marker(
+                            location=dest_coords,
+                            popup=f"🛬 目的地: {row['destination']}",
+                            tooltip=f"🛬 {row['destination']}",
+                            icon=folium.DivIcon(
+                                html=f'<div style="background-color: #dc3545; color: white; border-radius: 50%; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">🛬</div>',
+                                icon_size=(20, 20),
+                                icon_anchor=(10, 10)
+                            )
+                        ).add_to(m)
                 
-                # 创建航线类型图例
+                # 创建航线类型图例（可折叠）
                 legend_html = """
-                <div style="position: fixed; 
-                           top: 10px; right: 10px; width: 240px; height: auto;
+                <div id="legend-container" style="position: fixed; 
+                           top: 10px; right: 10px; width: 260px; height: auto;
                            background-color: white; border:2px solid grey; z-index:9999; 
-                           font-size:12px; padding: 12px; border-radius: 8px;
+                           font-size:12px; border-radius: 8px;
                            box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
-                    <h4 style="margin: 0 0 12px 0; text-align: center; color: #333; font-size: 14px;">🗺️ 航线图例</h4>
+                    <!-- 图例标题栏（可点击折叠） -->
+                    <div style="
+                        padding: 12px; cursor: pointer; background: #f8f9fa; 
+                        border-radius: 6px 6px 0 0; border-bottom: 1px solid #ddd;
+                        display: flex; justify-content: space-between; align-items: center;"
+                        onclick="var content = document.getElementById('legend-content');
+                                var toggle = document.getElementById('legend-toggle');
+                                if (content.style.display === 'none') {
+                                    content.style.display = 'block';
+                                    toggle.textContent = '▼';
+                                } else {
+                                    content.style.display = 'none';
+                                    toggle.textContent = '▶';
+                                }">
+                        <h4 style="margin: 0; color: #333; font-size: 14px;">🗺️ 航线图例</h4>
+                        <span id="legend-toggle" style="font-size: 16px; color: #666;">▼</span>
+                    </div>
                     
-                    <!-- 航线类型图例 -->
-                    <div style="margin-bottom: 12px;">
-                        <div style="margin: 6px 0; display: flex; align-items: center;">
-                            <div style="width: 20px; height: 4px; background-color: #4CAF50; 
-                                       border-radius: 2px; margin-right: 10px;"></div>
-                            <span style="font-size: 12px; color: #333; font-weight: 500;">🌍 国际进口</span>
+                    <!-- 图例内容（可折叠） -->
+                    <div id="legend-content" style="padding: 12px; display: block;">
+                        <!-- 机场标记说明 -->
+                        <div style="margin-bottom: 12px;">
+                            <h5 style="margin: 5px 0; color: #333; font-size: 12px;">🛫 机场标记</h5>
+                            <div style="margin: 6px 0; display: flex; align-items: center;">
+                                <div style="width: 16px; height: 16px; background: #8B0000; 
+                                           border-radius: 50%; margin-right: 8px; border: 1px solid white;"></div>
+                                <span style="font-size: 11px; color: #333;">超级枢纽 (≥30班)</span>
+                            </div>
+                            <div style="margin: 6px 0; display: flex; align-items: center;">
+                                <div style="width: 14px; height: 14px; background: #FF4500; 
+                                           border-radius: 50%; margin-right: 8px; border: 1px solid white;"></div>
+                                <span style="font-size: 11px; color: #333;">主要枢纽 (20-29班)</span>
+                            </div>
+                            <div style="margin: 6px 0; display: flex; align-items: center;">
+                                <div style="width: 12px; height: 12px; background: #FFD700; 
+                                           border-radius: 50%; margin-right: 8px; border: 1px solid white;"></div>
+                                <span style="font-size: 11px; color: #333;">区域枢纽 (10-19班)</span>
+                            </div>
+                            <div style="margin: 6px 0; display: flex; align-items: center;">
+                                <div style="width: 10px; height: 10px; background: #4169E1; 
+                                           border-radius: 50%; margin-right: 8px; border: 1px solid white;"></div>
+                                <span style="font-size: 11px; color: #333;">重要机场 (5-9班)</span>
+                            </div>
+                            <div style="margin: 6px 0; display: flex; align-items: center;">
+                                <div style="width: 8px; height: 8px; background: #32CD32; 
+                                           border-radius: 50%; margin-right: 8px; border: 1px solid white;"></div>
+                                <span style="font-size: 11px; color: #333;">一般机场 (<5班)</span>
+                            </div>
+                            <div style="margin: 6px 0; font-size: 10px; color: #666; padding: 4px; background: #f0f8ff; border-radius: 3px;">
+                                📍 显示完整机场代码标签
+                            </div>
                         </div>
-                        <div style="margin: 6px 0; display: flex; align-items: center;">
-                            <div style="width: 20px; height: 4px; background-color: #FFC107; 
-                                       border-radius: 2px; margin-right: 10px;"></div>
-                            <span style="font-size: 12px; color: #333; font-weight: 500;">🌍 国际出口</span>
+                        
+                        <hr style="margin: 10px 0; border: none; border-top: 1px solid #ddd;">
+                        
+                        <!-- 航线标记说明 -->
+                        <div style="margin-bottom: 12px;">
+                            <h5 style="margin: 5px 0; color: #333; font-size: 12px;">🎯 航线标记</h5>
+                            <div style="margin: 6px 0; display: flex; align-items: center;">
+                                <div style="width: 16px; height: 16px; background: #28a745; 
+                                           border-radius: 50%; margin-right: 8px; border: 2px solid white;"></div>
+                                <span style="font-size: 11px; color: #333;">🛫 始发地标记</span>
+                            </div>
+                            <div style="margin: 6px 0; display: flex; align-items: center;">
+                                <div style="width: 16px; height: 16px; background: #dc3545; 
+                                           border-radius: 50%; margin-right: 8px; border: 2px solid white;"></div>
+                                <span style="font-size: 11px; color: #333;">🛬 目的地标记</span>
+                            </div>
                         </div>
-                        <div style="margin: 6px 0; font-size: 11px; color: #666; padding: 5px; background: #f5f5f5; border-radius: 3px;">
-                            💡 国内机场作为中转地，无纯国内航线
+                        
+                        <hr style="margin: 10px 0; border: none; border-top: 1px solid #ddd;">
+                        
+                        <!-- 航线类型图例 -->
+                        <div style="margin-bottom: 12px;">
+                            <h5 style="margin: 5px 0; color: #333; font-size: 12px;">🌍 航线类型</h5>
+                            <div style="margin: 6px 0; display: flex; align-items: center;">
+                                <div style="width: 20px; height: 4px; background-color: #4CAF50; 
+                                           border-radius: 2px; margin-right: 10px;"></div>
+                                <span style="font-size: 11px; color: #333;">国际进口</span>
+                            </div>
+                            <div style="margin: 6px 0; display: flex; align-items: center;">
+                                <div style="width: 20px; height: 4px; background-color: #FFC107; 
+                                           border-radius: 2px; margin-right: 10px;"></div>
+                                <span style="font-size: 11px; color: #333;">国际出口</span>
+                            </div>
+                            <div style="margin: 6px 0; font-size: 10px; color: #666; padding: 4px; background: #f5f5f5; border-radius: 3px;">
+                                💡 国内机场作为中转地，无纯国内航线
+                            </div>
+                        </div>
+                        
+                        <hr style="margin: 10px 0; border: none; border-top: 1px solid #ddd;">
+                        
+                        <!-- 线条说明 -->
+                        <div style="font-size: 10px; color: #666; text-align: center; line-height: 1.4;">
+                            💡 线条粗细表示航班频次<br>
+                            🔥 圆点标记高频航线(≥5班)<br>
+                            ⚡ 动态效果显示航线流向<br>
+                            🔄 粗线条表示往返航线<br>
+                            📍 点击航线查看中转信息
                         </div>
                     </div>
                     
-                    <hr style="margin: 10px 0; border: none; border-top: 1px solid #ddd;">
-                    
-                    <!-- 地理边界图例 -->
-                    <div style="margin-bottom: 12px;">
-                        <h5 style="margin: 5px 0; color: #333; font-size: 12px;">🌏 地理边界</h5>
-                        <div style="margin: 6px 0; font-size: 10px; color: #666; padding: 4px; background: #f0f8ff; border-radius: 3px;">
-                            🗺️ 基于OpenStreetMap地图数据
-                        </div>
-                    </div>
-                    
-                    <hr style="margin: 10px 0; border: none; border-top: 1px solid #ddd;">
-                    
-                    <!-- 线条说明 -->
-                    <div style="font-size: 10px; color: #666; text-align: center; line-height: 1.4;">
-                        💡 线条粗细表示航班频次<br>
-                        🔥 圆点标记高频航线(≥5班)<br>
-                        ⚡ 动态效果显示航线流向<br>
-                        🔄 粗线条表示往返航线<br>
-                        📍 点击航线查看中转信息
-                    </div>
+                    <!-- 折叠功能脚本 -->
+                    <script>
+                        function toggleLegend() {
+                            const content = document.getElementById('legend-content');
+                            const toggle = document.getElementById('legend-toggle');
+                            const container = document.getElementById('legend-container');
+                            
+                            if (content.style.display === 'none') {
+                                content.style.display = 'block';
+                                toggle.textContent = '▼';
+                                container.style.height = 'auto';
+                            } else {
+                                content.style.display = 'none';
+                                toggle.textContent = '▶';
+                                container.style.height = 'auto';
+                            }
+                        }
+                        
+                        // 默认展开状态
+                        document.addEventListener('DOMContentLoaded', function() {
+                            document.getElementById('legend-content').style.display = 'block';
+                        });
+                    </script>
                 """
                 
                 # 统计国际航线数量和路径分析（数据源中无纯国内航线）
@@ -1424,10 +1756,15 @@ if files_to_load:
                     else:
                         international_export_count += 1
                     
-                    # 统计中转航线（经过国内机场）
-                    origin_category = categorize_city(route['origin'])
-                    dest_category = categorize_city(route['destination'])
-                    if origin_category == '国内' or dest_category == '国内':
+                    # 统计中转航线（基于分隔符判断）
+                    origin = str(route['origin'])
+                    destination = str(route['destination'])
+                    transit_separators = ['-', '—', '→', '>']
+                    has_transit = any(
+                        sep in origin or sep in destination 
+                        for sep in transit_separators
+                    )
+                    if has_transit:
                         transit_routes_count += 1
                     
                     # 统计往返航线
@@ -1561,23 +1898,46 @@ if files_to_load:
                     </div>
                     """
                     
-                    # 创建自定义图标
+                    # 创建自定义图标和标签
                     icon_html = f"""
                     <div style="
-                        background: linear-gradient(135deg, {icon_color}, {icon_color}dd);
-                        border: 2px solid white;
-                        border-radius: 50%;
-                        width: {icon_size}px;
-                        height: {icon_size}px;
+                        position: relative;
                         display: flex;
+                        flex-direction: column;
                         align-items: center;
                         justify-content: center;
-                        font-size: {max(8, icon_size-6)}px;
-                        color: white;
-                        font-weight: bold;
-                        box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-                        text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
-                    ">{airport_code[:2]}</div>
+                    ">
+                        <!-- 机场图标 -->
+                        <div style="
+                            background: linear-gradient(135deg, {icon_color}, {icon_color}dd);
+                            border: 2px solid white;
+                            border-radius: 50%;
+                            width: {icon_size}px;
+                            height: {icon_size}px;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                            font-size: {max(8, icon_size-6)}px;
+                            color: white;
+                            font-weight: bold;
+                            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+                            text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+                        ">{airport_code[:2]}</div>
+                        <!-- 机场标签 -->
+                        <div style="
+                            margin-top: 2px;
+                            background: rgba(255, 255, 255, 0.9);
+                            border: 1px solid {icon_color};
+                            border-radius: 4px;
+                            padding: 1px 4px;
+                            font-size: 10px;
+                            font-weight: bold;
+                            color: {icon_color};
+                            white-space: nowrap;
+                            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+                            text-shadow: none;
+                        ">{airport_code}</div>
+                    </div>
                     """
                     
                     # 添加机场标记
@@ -1606,25 +1966,227 @@ if files_to_load:
                             tooltip=f"📍 {airport_code} 影响区域"
                         ).add_to(m)
                 
-                # 显示地图 - 使用更大的尺寸和全宽度，强制刷新
-                map_output = st_folium(m, width=1400, height=800, returned_objects=["last_object_clicked"], key=map_key)
+                # 根据地图类型显示不同的地图
+                if map_type == "3D地图":
+                    st.subheader("🌐 3D航线地图")
+                    
+                    # 检查3D地图配置
+                    from config.google_maps_config import is_maps_configured, show_maps_config_status
+                    
+                    if not is_maps_configured():
+                        st.warning("⚠️ 3D地图功能需要配置Google Maps API")
+                        show_maps_config_status()
+                        st.info("💡 暂时显示2D地图，配置完成后可使用3D功能")
+                        map_output = st_folium(m, width=1400, height=800, returned_objects=["last_object_clicked"], key=map_key)
+                    else:
+                        # 准备3D地图数据
+                        route_data_3d = []
+                        valid_routes_count = 0
+                        invalid_routes_count = 0
+                        
+                        # 导入新的机场信息获取函数
+                        from airport_coords import get_airport_info
+                        
+                        for _, route in filtered.iterrows():
+                            # 使用正确的字段名
+                            origin_code = route.get('origin', '')
+                            destination_code = route.get('destination', '')
+                            
+                            start_info = get_airport_info(origin_code)
+                            end_info = get_airport_info(destination_code)
+                            
+                            if start_info and end_info:
+                                # 验证坐标数值有效性
+                                def is_valid_coordinate_3d(coords):
+                                    if not coords or len(coords) != 2:
+                                        return False
+                                    lat, lon = coords
+                                    return (isinstance(lat, (int, float)) and isinstance(lon, (int, float)) and
+                                            math.isfinite(lat) and math.isfinite(lon) and
+                                            -90 <= lat <= 90 and -180 <= lon <= 180)
+                                
+                                if not is_valid_coordinate_3d(start_info['coords']) or not is_valid_coordinate_3d(end_info['coords']):
+                                    print(f"警告：3D地图坐标数值无效 - {origin_code}: {start_info['coords']}, {destination_code}: {end_info['coords']}")
+                                    invalid_routes_count += 1
+                                    continue
+                                
+                                try:
+                                    # 检查是否为双向航线
+                                    route_key = f"{origin_code}-{destination_code}"
+                                    reverse_route_key = f"{destination_code}-{origin_code}"
+                                    
+                                    # 在往返航线视图模式下，使用不同的双向航线检测逻辑
+                                    if view_mode == "往返航线视图":
+                                        # 在往返航线视图中，检查当前航线对是否有双向数据
+                                        origin = route.get('origin', '')
+                                        destination = route.get('destination', '')
+                                        route_pair_key = tuple(sorted([origin, destination]))
+                                        
+                                        # 查找对应的航线对
+                                        is_bidirectional = False
+                                        # 检查round_trip_pairs是否有数据
+                                        if round_trip_pairs:
+                                            for pair in round_trip_pairs:
+                                                if pair['has_both_directions']:
+                                                    pair_cities = pair['city_pair'].replace(' ↔ ', '|').split('|')
+                                                    if len(pair_cities) == 2:
+                                                        pair_key = tuple(sorted(pair_cities))
+                                                        if pair_key == route_pair_key:
+                                                            is_bidirectional = True
+                                                            break
+                                        else:
+                                            # 如果round_trip_pairs为空，使用route_stats检测
+                                            is_bidirectional = reverse_route_key in route_stats
+                                    else:
+                                        # 标准视图模式下的双向航线检测
+                                        is_bidirectional = reverse_route_key in route_stats
+                                    
+                                    # 调试信息：打印双向航线检测结果
+                                    if is_bidirectional:
+                                        print(f"发现双向航线: {route_key} <-> {reverse_route_key} (模式: {view_mode})")
+                                    
+                                    # 检查机场信息是否有效
+                                    if start_info and end_info and start_info.get('coords') and end_info.get('coords'):
+                                        route_data_3d.append({
+                                            'id': f"route_{valid_routes_count}",
+                                            'start_airport': origin_code,
+                                            'end_airport': destination_code,
+                                            'start_airport_name': start_info['name'],  # 使用真实的机场名称
+                                            'end_airport_name': end_info['name'],  # 使用真实的机场名称
+                                            'origin': origin_code,  # 添加origin字段用于机场标记
+                                            'destination': destination_code,  # 添加destination字段用于机场标记
+                                            'start_lat': float(start_info['coords'][0]),
+                                            'start_lng': float(start_info['coords'][1]),
+                                            'end_lat': float(end_info['coords'][0]),
+                                            'end_lng': float(end_info['coords'][1]),
+                                            'frequency': int(route_stats.get(route_key, {}).get('count', 1)),
+                                            'airline': str(route.get('airline', '')),
+                                            'aircraft_type': str(route.get('aircraft', '')),
+                                            'route_type': 'international',  # 标记为国际航线
+                                            'direction': str(route.get('direction', '出口')),  # 添加方向字段
+                                            'is_bidirectional': is_bidirectional,  # 添加双向航线标识
+                                            'bidirectional': is_bidirectional  # 添加备用字段名
+                                        })
+                                        valid_routes_count += 1
+                                    else:
+                                        print(f"跳过航线 {origin_code} -> {destination_code}: 机场信息不完整")
+                                        invalid_routes_count += 1
+                                except Exception as e:
+                                    print(f"处理航线数据时出错: {e}, 航线: {origin_code} -> {destination_code}")
+                                    invalid_routes_count += 1
+                            else:
+                                invalid_routes_count += 1
+                        
+                        # 显示数据处理统计
+                        if invalid_routes_count > 0:
+                            st.info(f"📊 数据处理: 有效航线 {valid_routes_count} 条，无效航线 {invalid_routes_count} 条")
+                        
+                        if len(route_data_3d) == 0:
+                            st.warning("⚠️ 没有有效的航线数据可以显示在3D地图上")
+                            st.info("💡 可能原因：机场坐标缺失或数据格式错误")
+                            st.info("💡 显示2D地图作为替代")
+                            map_output = st_folium(m, width=1400, height=800, returned_objects=["last_object_clicked"], key=map_key)
+                        else:
+                            # 显示3D地图控制面板
+                            try:
+                                control_config = create_3d_control_panel()
+                            except:
+                                control_config = {}
+                            
+                            # 显示3D地图加载提示
+                            with st.spinner("🌐 正在加载3D地图，请稍候..."):
+                                # 渲染3D地图
+                                try:
+                                    # 生成数据哈希用于动态key，确保数据变化时强制重新渲染
+                                    import hashlib
+                                    import json
+                                    data_str = json.dumps(route_data_3d, sort_keys=True, default=str)
+                                    data_hash = hashlib.md5(data_str.encode()).hexdigest()[:8]
+                                    
+                                    # 使用动态key强制重新加载3D地图组件
+                                    map_output = render_optimized_3d_map(
+                                        route_data_3d,
+                                        height=700,
+                                        key=f"3d_map_{data_hash}",  # 动态key确保数据变化时重新渲染
+                                        force_reload=True,  # 强制重新加载
+                                        **control_config
+                                    )
+                                    
+                                    # 显示3D地图统计
+                                    col1, col2, col3, col4 = st.columns(4)
+                                    with col1:
+                                        st.info(f"🗺️ 3D航线: {len(route_data_3d)} 条")
+                                    with col2:
+                                        unique_airports = len(set([r['start_airport'] for r in route_data_3d] + [r['end_airport'] for r in route_data_3d]))
+                                        st.success(f"✈️ 机场: {unique_airports} 个")
+                                    with col3:
+                                        unique_airlines = len(set([r['airline'] for r in route_data_3d]))
+                                        st.warning(f"🏢 航司: {unique_airlines} 家")
+                                    with col4:
+                                        avg_frequency = sum([r['frequency'] for r in route_data_3d]) / len(route_data_3d) if route_data_3d else 0
+                                        st.metric("平均频率", f"{avg_frequency:.1f}")
+                                
+                                except Exception as e:
+                                    st.error(f"❌ 3D地图加载失败: {str(e)}")
+                                    st.info("🔧 可能的原因：")
+                                    st.info("• Google Maps API密钥未启用3D Maps功能")
+                                    st.info("• 地图ID配置不正确")
+                                    st.info("• 网络连接问题")
+                                    st.info("• 浏览器不支持WebGL")
+                                    st.info("💡 正在回退到2D地图...")
+                                    map_output = st_folium(m, width=1400, height=800, returned_objects=["last_object_clicked"], key=map_key)
                 
-                # 显示坐标统计信息
-                if 'unique_routes_displayed' in locals() and 'routes_without_coords' in locals():
+                else:
+                    # 显示2D地图 - 使用更大的尺寸和全宽度，强制刷新
+                    st.subheader("🗺️ 2D航线地图")
+                    map_output = st_folium(m, width=1400, height=800, returned_objects=["last_object_clicked"], key=map_key)
+                
+                # 重新计算当前筛选数据的坐标统计
+                current_routes_without_coords = 0
+                current_total_records = len(filtered)
+                
+                for idx, row in filtered.iterrows():
+                    origin_coords = get_airport_coords(row['origin'])
+                    dest_coords = get_airport_coords(row['destination'])
+                    
+                    # 检查坐标是否有效
+                    if origin_coords is None or dest_coords is None:
+                        current_routes_without_coords += 1
+                        continue
+                    
+                    # 验证坐标数值有效性
+                    def is_valid_coordinate(coords):
+                        if not coords or len(coords) != 2:
+                            return False
+                        lat, lon = coords
+                        return (isinstance(lat, (int, float)) and isinstance(lon, (int, float)) and
+                                math.isfinite(lat) and math.isfinite(lon) and
+                                -90 <= lat <= 90 and -180 <= lon <= 180)
+                    
+                    if not is_valid_coordinate(origin_coords) or not is_valid_coordinate(dest_coords):
+                        current_routes_without_coords += 1
+                
+                # 显示地图统计信息
+                if map_type == "2D地图":
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
                         st.info(f"🗺️ 地图显示航线: {unique_routes_displayed} 条")
                     with col2:
-                        st.warning(f"⚠️ 缺失坐标航线: {routes_without_coords} 条")
+                        if current_routes_without_coords > 0:
+                            st.warning(f"⚠️ 缺失坐标航线: {current_routes_without_coords} 条")
+                        else:
+                            st.success(f"✅ 所有航线坐标完整: 0 条缺失")
                     with col3:
-                        st.success(f"📊 总航线记录: {total_route_records} 条")
+                        st.success(f"📊 总航线记录: {current_total_records} 条")
                     with col4:
-                        st.metric("去重率", f"{unique_routes_displayed}/{total_route_records - routes_without_coords}")
+                        valid_routes = current_total_records - current_routes_without_coords
+                        st.metric("显示率", f"{(unique_routes_displayed/current_total_records*100):.1f}%" if current_total_records > 0 else "0%")
+                        st.metric("有效率", f"{(valid_routes/current_total_records*100):.1f}%" if current_total_records > 0 else "0%")
                     
-                    if routes_without_coords > 0:
+                    if current_routes_without_coords > 0:
                         st.caption("💡 提示：缺失坐标的航线仍包含在数据统计中，但无法在地图上显示")
                     
-                    if total_route_records > unique_routes_displayed + routes_without_coords:
+                    if current_total_records > unique_routes_displayed + current_routes_without_coords:
                         st.caption(f"📋 说明：总记录数包含重复航线，地图仅显示 {unique_routes_displayed} 条唯一航线路径")
                 
                 # 减少地图和导出功能之间的间距
@@ -1637,9 +2199,43 @@ if files_to_load:
                 with col1:
                     if st.button("📄 导出当前地图为 HTML", type="primary"):
                         export_path = "D:/flight_tool/exported_map.html"
-                        m.save(export_path)
-                        st.success(f"地图已导出到: {export_path}")
-                        st.balloons()
+                        # 修复导出时的边界问题
+                        try:
+                            # 临时移除可能的边界限制
+                            original_max_bounds = getattr(m, '_max_bounds', None)
+                            if hasattr(m, '_max_bounds'):
+                                m._max_bounds = None
+                            
+                            # 保存地图
+                            m.save(export_path)
+                            
+                            # 读取并修复导出的HTML文件，移除maxBounds设置
+                            with open(export_path, 'r', encoding='utf-8') as f:
+                                html_content = f.read()
+                            
+                            # 移除maxBounds配置
+                            import re
+                            html_content = re.sub(r'"maxBounds":\s*\[[^\]]+\],?', '', html_content)
+                            html_content = re.sub(r'maxBounds:\s*\[[^\]]+\],?', '', html_content)
+                            
+                            # 写回修复后的内容
+                            with open(export_path, 'w', encoding='utf-8') as f:
+                                f.write(html_content)
+                            
+                            # 恢复原始设置
+                            if original_max_bounds is not None:
+                                m._max_bounds = original_max_bounds
+                                
+                            st.success(f"地图已导出到: {export_path}")
+                            st.balloons()
+                        except Exception as e:
+                            st.error(f"导出地图时出错: {str(e)}")
+                            # 尝试基本导出
+                            try:
+                                m.save(export_path)
+                                st.warning(f"使用基本模式导出到: {export_path}")
+                            except:
+                                st.error("导出失败，请检查文件路径权限")
                 
                 with col2:
                     if st.button("📊 导出筛选数据为 Excel"):
@@ -1650,239 +2246,458 @@ if files_to_load:
                 # 减少导出功能和数据表格之间的间距
                 st.markdown("<div style='margin-top: -1rem; margin-bottom: -0.5rem;'></div>", unsafe_allow_html=True)
                 
-                # 数据表格预览 - 默认展开并优化显示
-                with st.expander("📋 查看筛选后的数据详情", expanded=True):
-                    # 添加航线类型列用于显示
-                    display_df = filtered.copy()
+                # 添加航线类型列用于显示
+                display_df = filtered.copy()
+                
+            # 数据表格预览 - 移出expander，直接显示
+            # with st.expander("📋 查看筛选后的数据详情", expanded=True):
+                
+            # 添加航线类型分类
+            if "origin_category" in display_df.columns and "destination_category" in display_df.columns:
+                def classify_route_type(row):
+                    origin_cat = row['origin_category']
+                    dest_cat = row['destination_category']
                     
-                    # 添加航线类型分类
-                    if "origin_category" in display_df.columns and "destination_category" in display_df.columns:
-                        def classify_route_type(row):
-                            origin_cat = row['origin_category']
-                            dest_cat = row['destination_category']
-                            
-                            # 如果任一分类为'未知'，则显示为'未分类'
-                            if origin_cat == '未知' or dest_cat == '未知':
-                                return '未分类'
-                            # 如果都是国内，则为国内航线
-                            elif origin_cat == '国内' and dest_cat == '国内':
-                                return '国内航线'
-                            # 如果至少有一个是国际，则为国际航线
-                            elif origin_cat == '国际' or dest_cat == '国际':
-                                return '国际航线'
-                            else:
-                                return '未分类'
-                        
-                        display_df['航线类型'] = display_df.apply(classify_route_type, axis=1)
+                    # 如果任一分类为'未知'，则显示为'未分类'
+                    if origin_cat == '未知' or dest_cat == '未知':
+                        return '未分类'
+                    # 如果都是国内，则为国内航线
+                    elif origin_cat == '国内' and dest_cat == '国内':
+                        return '国内航线'
+                    # 如果至少有一个是国际，则为国际航线
+                    elif origin_cat == '国际' or dest_cat == '国际':
+                        return '国际航线'
                     else:
-                        display_df['航线类型'] = '未分类'
+                        return '未分类'
+                
+                display_df['航线类型'] = display_df.apply(classify_route_type, axis=1)
+            else:
+                display_df['航线类型'] = '未分类'
+            
+            # 添加进出口类型显示
+            display_df['进出口类型'] = display_df['direction'].map({
+                '出口': '🔴 出口',
+                '进口': '🔵 进口'
+            }).fillna('❓ 未知')
                     
-                    # 添加进出口类型显示
-                    display_df['进出口类型'] = display_df['direction'].map({
-                        '出口': '🔴 出口',
-                        '进口': '🔵 进口'
-                    }).fillna('❓ 未知')
+            # 分析中转地信息
+            def analyze_transit_hubs(df):
+                """改进的中转地分析逻辑 - 优先使用实际中转站信息"""
+                transit_info = []
+                
+                for idx, row in df.iterrows():
+                    origin = str(row['origin'])
+                    destination = str(row['destination'])
                     
-                    # 分析中转地信息
-                    def analyze_transit_hubs(df):
-                        """分析每条航线的潜在中转地"""
-                        transit_info = []
+                    # 首先检查是否有明确的中转站信息
+                    actual_transits = []
+                    
+                    # 从destination字段提取中转站（支持多种分隔符）
+                    transit_separators = ['-', '—', '→', '>']
+                    for sep in transit_separators:
+                        if sep in destination:
+                            parts = destination.split(sep)
+                            if len(parts) > 1:
+                                actual_transits.extend([p.strip() for p in parts[:-1] if p.strip()])
+                            break
+                    
+                    # 从origin字段提取中转站（支持多种分隔符）
+                    for sep in transit_separators:
+                        if sep in origin:
+                            parts = origin.split(sep)
+                            if len(parts) > 1:
+                                actual_transits.extend([p.strip() for p in parts[1:] if p.strip()])
+                            break
+                    
+                    if actual_transits:
+                        # 有明确的中转站信息
+                        unique_transits = list(dict.fromkeys(actual_transits))  # 去重保序
+                        transit_info.append('🔄 ' + ', '.join(unique_transits[:2]))
+                    else:
+                        # 没有明确中转站，进行网络分析（仅作为补充）
+                        real_origin = origin.split('-')[0].strip() if '-' in origin else origin.strip()
+                        real_destination = destination.split('-')[-1].strip() if '-' in destination else destination.strip()
                         
-                        for idx, row in df.iterrows():
-                            origin = row['origin']
-                            destination = row['destination']
+                        # 查找可能的中转地（同时连接起点和终点的城市）
+                        potential_transits = []
+                        
+                        # 查找从起点出发的其他航线的目的地
+                        origin_destinations = df[df['origin'] == real_origin]['destination'].unique()
+                        # 查找到达终点的其他航线的起点
+                        dest_origins = df[df['destination'] == real_destination]['origin'].unique()
+                        
+                        # 找到交集，即可能的中转地
+                        common_cities = set(origin_destinations) & set(dest_origins)
+                        # 排除起点和终点本身
+                        common_cities.discard(real_origin)
+                        common_cities.discard(real_destination)
+                        
+                        if common_cities:
+                            # 按照该中转地的航班频次排序
+                            transit_counts = {}
+                            for city in common_cities:
+                                count = len(df[(df['origin'] == real_origin) & (df['destination'] == city)]) + \
+                                       len(df[(df['origin'] == city) & (df['destination'] == real_destination)])
+                                transit_counts[city] = count
                             
-                            # 查找可能的中转地（同时连接起点和终点的城市）
-                            potential_transits = []
+                            # 选择频次最高的前2个中转地，并标记为潜在中转枢纽
+                            sorted_transits = sorted(transit_counts.items(), key=lambda x: x[1], reverse=True)[:2]
+                            potential_transits = [city for city, count in sorted_transits]
+                            transit_info.append('🔀 潜在枢纽: ' + ', '.join(potential_transits))
+                        else:
+                            # 检查是否存在直接的往返航线
+                            reverse_exists = len(df[
+                                (df['origin'].str.contains(real_destination, na=False)) & 
+                                (df['destination'].str.contains(real_origin, na=False))
+                            ]) > 0
                             
-                            # 查找从起点出发的其他航线的目的地
-                            origin_destinations = df[df['origin'] == origin]['destination'].unique()
-                            # 查找到达终点的其他航线的起点
-                            dest_origins = df[df['destination'] == destination]['origin'].unique()
-                            
-                            # 找到交集，即可能的中转地
-                            common_cities = set(origin_destinations) & set(dest_origins)
-                            # 排除起点和终点本身
-                            common_cities.discard(origin)
-                            common_cities.discard(destination)
-                            
-                            if common_cities:
-                                # 按照该中转地的航班频次排序
-                                transit_counts = {}
-                                for city in common_cities:
-                                    count = len(df[(df['origin'] == origin) & (df['destination'] == city)]) + \
-                                           len(df[(df['origin'] == city) & (df['destination'] == destination)])
-                                    transit_counts[city] = count
-                                
-                                # 选择频次最高的前3个中转地
-                                sorted_transits = sorted(transit_counts.items(), key=lambda x: x[1], reverse=True)[:3]
-                                potential_transits = [city for city, count in sorted_transits]
-                            
-                            # 如果没有找到中转地，检查是否为直飞
-                            if not potential_transits:
-                                # 检查是否存在直接的往返航线
-                                reverse_exists = len(df[(df['origin'] == destination) & (df['destination'] == origin)]) > 0
-                                if reverse_exists:
-                                    transit_info.append('🔄 直飞往返')
+                            if reverse_exists:
+                                transit_info.append('✈️ 直飞往返')
+                            else:
+                                transit_info.append('✈️ 直飞')
+                
+                return transit_info
+            
+            # 添加中转地分析
+            display_df['中转地分析'] = analyze_transit_hubs(display_df)
+            
+            # 添加中转站字段（从原始数据中提取）
+            def extract_transit_station(row):
+                """从原始数据中提取中转站信息"""
+                transit_stations = []
+                transit_separators = ['-', '—', '→', '>']
+                
+                # 检查destination字段是否包含中转站信息
+                destination = str(row.get('destination', '')).strip()
+                for sep in transit_separators:
+                    if sep in destination:
+                        parts = destination.split(sep)
+                        if len(parts) >= 2:
+                            # 除了最后一个部分（真正的目的地），前面的都可能是中转站
+                            for i in range(len(parts) - 1):
+                                transit_part = parts[i].strip()
+                                if transit_part:
+                                    transit_stations.append(transit_part)
+                        break  # 找到第一个分隔符就停止
+                
+                # 检查origin字段是否包含中转站信息
+                origin = str(row.get('origin', '')).strip()
+                for sep in transit_separators:
+                    if sep in origin:
+                        parts = origin.split(sep)
+                        if len(parts) >= 2:
+                            # 除了第一个部分（真正的起点），后面的都可能是中转站
+                            for i in range(1, len(parts)):
+                                transit_part = parts[i].strip()
+                                if transit_part:
+                                    transit_stations.append(transit_part)
+                        break  # 找到第一个分隔符就停止
+                
+                # 去重并返回
+                unique_stations = list(dict.fromkeys(transit_stations))  # 保持顺序的去重
+                return ', '.join(unique_stations) if unique_stations else ''
+            
+            display_df['中转站'] = display_df.apply(extract_transit_station, axis=1)
+            
+            # 添加航线类型字段（区分直飞和中转）
+            def determine_route_type(row):
+                """判断航线类型：直飞或中转"""
+                origin = str(row['origin'])
+                destination = str(row['destination'])
+                
+                # 检查是否包含中转信息（支持多种分隔符）
+                transit_separators = ['-', '—', '→', '>']
+                has_transit = any(
+                    sep in origin or sep in destination 
+                    for sep in transit_separators
+                )
+                return '🔄 中转' if has_transit else '✈️ 直飞'
+            
+            display_df['航线类型'] = display_df.apply(determine_route_type, axis=1)
+            
+            # 修改进出口类型显示，包含航线类型信息
+            display_df['进出口类型'] = display_df.apply(
+                lambda row: f"{row['direction']} ({row['航线类型'].replace('🔄 ', '').replace('✈️ ', '')})",
+                axis=1
+            )
+            
+            # 计算航班频次（基于相同航线的出现次数）
+            route_frequency = display_df.groupby(['origin', 'destination']).size().reset_index(name='route_count')
+            display_df = display_df.merge(route_frequency, on=['origin', 'destination'], how='left')
+            
+            # 添加每周往返班次信息
+            def format_weekly_roundtrip_frequency(count):
+                # 假设每条记录代表单程，往返需要除以2
+                roundtrip_count = count / 2
+                if roundtrip_count < 1:
+                    return "每周不足1往返"
+                elif roundtrip_count == 1:
+                    return "每周1往返"
+                elif roundtrip_count <= 3.5:
+                    return f"每周{roundtrip_count:.1f}往返"
+                elif roundtrip_count <= 7:
+                    return f"每周{roundtrip_count:.1f}往返"
+                else:
+                    return f"高频({roundtrip_count:.1f}往返/周)"
+            
+            display_df['每周往返班次'] = display_df['route_count'].apply(format_weekly_roundtrip_frequency)
+                    
+            # 调试：打印分类信息
+            if not display_df.empty:
+                st.write("🔍 调试信息：")
+                if 'origin_category' in display_df.columns:
+                    origin_cats = display_df['origin_category'].value_counts()
+                    st.write(f"始发地分类: {dict(origin_cats)}")
+                if 'destination_category' in display_df.columns:
+                    dest_cats = display_df['destination_category'].value_counts()
+                    st.write(f"目的地分类: {dict(dest_cats)}")
+                route_types = display_df['航线类型'].value_counts()
+                st.write(f"航线类型分布: {dict(route_types)}")
+                
+                # 处理机龄数据 - 简化显示，提取平均机龄或主要机龄
+                def simplify_age_data(age_str):
+                    """显示实际机龄数据"""
+                    if pd.isna(age_str) or str(age_str).strip() == '':
+                        return '未知'
+                    
+                    age_str = str(age_str).strip()
+                    
+                    # 如果包含换行符，说明是多个机龄
+                    if '\n' in age_str:
+                        ages = [line.strip() for line in age_str.split('\n') if line.strip()]
+                        if ages:
+                            # 直接显示所有机龄，用逗号分隔
+                            formatted_ages = []
+                            for age in ages:
+                                if age.replace('.', '').isdigit():
+                                    formatted_ages.append(age + '年')
                                 else:
-                                    transit_info.append('✈️ 直飞')
-                            else:
-                                transit_info.append('🔀 ' + ', '.join(potential_transits[:2]))
-                        
-                        return transit_info
-                    
-                    # 添加中转地分析
-                    display_df['中转地分析'] = analyze_transit_hubs(display_df)
-                    
-                    # 计算航班频次（基于相同航线的出现次数）
-                    route_frequency = display_df.groupby(['origin', 'destination']).size().reset_index(name='route_count')
-                    display_df = display_df.merge(route_frequency, on=['origin', 'destination'], how='left')
-                    
-                    # 添加每周往返班次信息
-                    def format_weekly_roundtrip_frequency(count):
-                        # 假设每条记录代表单程，往返需要除以2
-                        roundtrip_count = count / 2
-                        if roundtrip_count < 1:
-                            return "每周不足1往返"
-                        elif roundtrip_count == 1:
-                            return "每周1往返"
-                        elif roundtrip_count <= 3.5:
-                            return f"每周{roundtrip_count:.1f}往返"
-                        elif roundtrip_count <= 7:
-                            return f"每周{roundtrip_count:.1f}往返"
+                                    formatted_ages.append(age)
+                            return ', '.join(formatted_ages)
                         else:
-                            return f"高频({roundtrip_count:.1f}往返/周)"
-                    
-                    display_df['每周往返班次'] = display_df['route_count'].apply(format_weekly_roundtrip_frequency)
-                    
-                    # 调试：打印分类信息
-                    if not display_df.empty:
-                        st.write("🔍 调试信息：")
-                        if 'origin_category' in display_df.columns:
-                            origin_cats = display_df['origin_category'].value_counts()
-                            st.write(f"始发地分类: {dict(origin_cats)}")
-                        if 'destination_category' in display_df.columns:
-                            dest_cats = display_df['destination_category'].value_counts()
-                            st.write(f"目的地分类: {dict(dest_cats)}")
-                        route_types = display_df['航线类型'].value_counts()
-                        st.write(f"航线类型分布: {dict(route_types)}")
-                    
-                    # 处理机龄数据 - 简化显示，提取平均机龄或主要机龄
-                    def simplify_age_data(age_str):
-                        """显示实际机龄数据"""
-                        if pd.isna(age_str) or str(age_str).strip() == '':
                             return '未知'
-                        
-                        age_str = str(age_str).strip()
-                        
-                        # 如果包含换行符，说明是多个机龄
-                        if '\n' in age_str:
-                            ages = [line.strip() for line in age_str.split('\n') if line.strip()]
-                            if ages:
-                                # 直接显示所有机龄，用逗号分隔
-                                formatted_ages = []
-                                for age in ages:
-                                    if age.replace('.', '').isdigit():
-                                        formatted_ages.append(age + '年')
-                                    else:
-                                        formatted_ages.append(age)
-                                return ', '.join(formatted_ages)
-                            else:
-                                return '未知'
+                    else:
+                        # 单个机龄
+                        if age_str.replace('.', '').isdigit():
+                            return age_str + '年'
                         else:
-                            # 单个机龄
-                            if age_str.replace('.', '').isdigit():
-                                return age_str + '年'
-                            else:
-                                return age_str
+                            return age_str
+                
+                # 应用机龄简化处理
+                if 'age' in display_df.columns:
+                    display_df['simplified_age'] = display_df['age'].apply(simplify_age_data)
+                
+                # 处理速度数据
+                def format_speed_data(speed_str):
+                    """格式化速度数据显示"""
+                    if pd.isna(speed_str) or str(speed_str).strip() == '':
+                        return '未知'
                     
-                    # 应用机龄简化处理
-                    if 'age' in display_df.columns:
-                        display_df['simplified_age'] = display_df['age'].apply(simplify_age_data)
+                    speed_str = str(speed_str).strip()
                     
-                    # 优化列名显示（移除注册号，添加简化的机龄）
-                    column_mapping = {
+                    # 如果已经包含单位，直接返回
+                    if any(unit in speed_str.lower() for unit in ['km/h', 'mph', 'knots', '节', '公里/小时']):
+                        return speed_str
+                    
+                    # 如果是纯数字，添加km/h单位
+                    if speed_str.replace('.', '').replace(',', '').isdigit():
+                        return speed_str + ' km/h'
+                    
+                    return speed_str
+                
+                # 处理每周班次数据
+                def format_weekly_frequency_data(freq_str):
+                    """格式化每周班次数据显示"""
+                    if pd.isna(freq_str) or str(freq_str).strip() == '':
+                        return '未知'
+                    
+                    freq_str = str(freq_str).strip()
+                    
+                    # 如果已经包含单位，直接返回
+                    if any(unit in freq_str for unit in ['班', '次', '班/周', '次/周']):
+                        return freq_str
+                    
+                    # 如果是纯数字，添加班/周单位
+                    if freq_str.replace('.', '').replace(',', '').isdigit():
+                        return freq_str + ' 班/周'
+                    
+                    return freq_str
+                
+                # 应用速度和每周班次处理
+                if 'speed' in display_df.columns:
+                    display_df['speed'] = display_df['speed'].apply(format_speed_data)
+                
+                if 'weekly_frequency' in display_df.columns:
+                    display_df['weekly_frequency'] = display_df['weekly_frequency'].apply(format_weekly_frequency_data)
+                
+                # 处理进出口城市-城市数据
+                def format_import_export_cities_data(row):
+                    """格式化进出口城市-城市数据显示"""
+                    if pd.isna(row) or str(row).strip() == '':
+                        # 如果没有专门的进出口城市字段，从始发地和目的地构建
+                        if hasattr(format_import_export_cities_data, 'origin_col') and hasattr(format_import_export_cities_data, 'dest_col'):
+                            origin = getattr(format_import_export_cities_data, 'origin_col', '未知')
+                            dest = getattr(format_import_export_cities_data, 'dest_col', '未知')
+                            return f"{origin}-{dest}"
+                        return '未知'
+                    
+                    return str(row).strip()
+                
+                # 应用进出口城市-城市处理
+                if 'import_export_cities' in display_df.columns:
+                    display_df['import_export_cities'] = display_df['import_export_cities'].apply(format_import_export_cities_data)
+                else:
+                    # 如果没有专门的进出口城市字段，从始发地和目的地构建
+                    if 'origin' in display_df.columns and 'destination' in display_df.columns:
+                        display_df['import_export_cities'] = display_df.apply(
+                            lambda row: f"{row['origin']}-{row['destination']}", axis=1
+                        )
+                
+                # 优化列名显示（根据实际数据字段）
+                column_mapping = {
                         'airline': '✈️ 航空公司',
+                        'reg': '🏷️ 注册号',
                         'aircraft': '🛩️ 机型',
-                        'simplified_age': '📅 机龄',
-                        'full_route': '🛣️ 完整航线',
-                        'origin': '🛫 始发地',
-                        'destination': '🛬 目的地',
-                        'direction': '📍 方向',
-                        '进出口类型': '🔄 进出口类型',
+                        'age': '📅 机龄',
                         '航线类型': '🌍 航线类型',
-                        '中转地分析': '🔀 中转地',
-                        '每周往返班次': '📊 每周往返班次',
+                        'direction': '📍 方向',
+                        'origin': '🛫 始发地',
+                        '中转站': '🔄 中转站',
+                        'destination': '🛬 目的地',
                         'flight_time': '⏱️ 飞行时长',
-                        'flight_distance': '📏 飞行距离'
-                    }
+                        'flight_distance': '📏 飞行距离',
+                        'speed': '🚀 飞行速度',
+                        '中转地分析': '🔀 中转地分析',
+                        'remarks': '📝 备注',
+                        'city_route': '🏙️ 城市航线',
+                        'airport_route': '🛫 机场航线',
+                        'iata_route': '✈️ 机场代码',
+                        'weekly_frequency': '📊 每周班次',
+                        '进出口类型': '📊 进出口类型',
+                        '每周往返班次': '🔄 每周往返班次'
+                }
+                
+                # 按照用户指定的顺序显示列
+                desired_order = [
+                    '✈️ 航空公司',
+                    '🏷️ 注册号', 
+                    '🛩️ 机型',
+                    '📅 机龄',
+                    '🌍 航线类型',
+                    '📍 方向',
+                    '🛫 始发地',
+                    '🔄 中转站',
+                    '🛬 目的地',
+                    '⏱️ 飞行时长',
+                    '📏 飞行距离',
+                    '🚀 飞行速度',
+                    '🔀 中转地分析',
+                    '📝 备注'
+                ]
+                
+                # 只显示实际存在的列，按指定顺序排列
+                display_columns = []
+                for desired_col in desired_order:
+                    # 找到对应的原始列名
+                    for col_key, col_display in column_mapping.items():
+                        if col_display == desired_col and col_key in display_df.columns:
+                            display_columns.append(col_display)
+                            break
+                
+                # 清理飞行距离列的空值，防止转换错误
+                if 'flight_distance' in display_df.columns:
+                    # 先转换为字符串类型
+                    display_df['flight_distance'] = display_df['flight_distance'].astype(str)
+                    # 处理各种空值情况
+                    display_df['flight_distance'] = display_df['flight_distance'].replace(['nan', 'NaN', 'None', '', ' '], '未知')
+                    # 再次填充可能的空值
+                    display_df['flight_distance'] = display_df['flight_distance'].fillna('未知')
+                    # 确保所有值都是字符串类型，避免Arrow转换错误
+                    display_df['flight_distance'] = display_df['flight_distance'].apply(lambda x: str(x) if pd.notna(x) else '未知')
+                
+                # 清理其他可能导致类型转换错误的列
+                for col in display_df.columns:
+                    if display_df[col].dtype == 'object':
+                        # 将所有object类型的列转换为字符串，避免混合类型
+                        display_df[col] = display_df[col].astype(str)
+                        display_df[col] = display_df[col].replace(['nan', 'NaN', 'None'], '')
+                        display_df[col] = display_df[col].fillna('')
+                
+                # 重命名列
+                display_df_renamed = display_df.rename(columns=column_mapping)
+                
+                # 显示数据统计信息
+                col1, col2, col3, col4, col5 = st.columns(5)
+                with col1:
+                    st.metric("📊 航线记录", len(display_df))
+                with col2:
+                    st.metric("✈️ 航空公司", display_df['airline'].nunique())
+                with col3:
+                    st.metric("🛩️ 机型种类", display_df['aircraft'].nunique())
+                with col4:
+                    export_count = len(display_df[display_df['direction'] == '出口'])
+                    import_count = len(display_df[display_df['direction'] == '进口'])
+                    st.metric("🔄 出口/进口", f"{export_count}/{import_count}")
+                with col5:
+                    # 统计中转航线数量
+                    transit_count = len(display_df[display_df['中转地分析'].str.contains('🔀', na=False)])
+                    direct_count = len(display_df) - transit_count
+                    st.metric("🔀 中转/直飞", f"{transit_count}/{direct_count}")
+                
+                # 添加详细统计信息（移出列布局，使其占用全宽度）
+                with st.expander("📈 详细统计信息", expanded=False):
+                    col1, col2 = st.columns(2)
                     
-                    # 选择要显示的列（移除注册号，添加机龄）
-                    display_columns = [
-                        '✈️ 航空公司', '🛩️ 机型', '📅 机龄', '🛣️ 完整航线', '🛫 始发地', '🛬 目的地', 
-                        '🔄 进出口类型', '🌍 航线类型', '📊 每周往返班次', '⏱️ 飞行时长', '📏 飞行距离'
-                    ]
-                    
-                    # 重命名列
-                    display_df_renamed = display_df.rename(columns=column_mapping)
-                    
-                    # 显示数据统计信息
-                    col1, col2, col3, col4, col5 = st.columns(5)
                     with col1:
-                        st.metric("📊 航线记录", len(display_df))
+                        st.subheader("🛩️ 机型分布")
+                        aircraft_counts = display_df['aircraft'].value_counts().head(10)
+                        st.bar_chart(aircraft_counts)
+                        
+                        st.subheader("🔄 进出口分布")
+                        direction_counts = display_df['direction'].value_counts()
+                        st.bar_chart(direction_counts)
+                    
                     with col2:
-                        st.metric("✈️ 航空公司", display_df['airline'].nunique())
-                    with col3:
-                        st.metric("🛩️ 机型种类", display_df['aircraft'].nunique())
-                    with col4:
-                        export_count = len(display_df[display_df['direction'] == '出口'])
-                        import_count = len(display_df[display_df['direction'] == '进口'])
-                        st.metric("🔄 出口/进口", f"{export_count}/{import_count}")
-                    with col5:
-                        # 统计中转航线数量
-                        transit_count = len(display_df[display_df['中转地分析'].str.contains('🔀', na=False)])
-                        direct_count = len(display_df) - transit_count
-                        st.metric("🔀 中转/直飞", f"{transit_count}/{direct_count}")
-                    
-                    # 添加详细统计信息
-                    with st.expander("📈 详细统计信息", expanded=False):
-                        col1, col2 = st.columns(2)
+                        st.subheader("✈️ 航空公司分布")
+                        airline_counts = display_df['airline'].value_counts().head(10)
+                        st.bar_chart(airline_counts)
                         
-                        with col1:
-                            st.subheader("🛩️ 机型分布")
-                            aircraft_counts = display_df['aircraft'].value_counts().head(10)
-                            st.bar_chart(aircraft_counts)
-                            
-                            st.subheader("🔄 进出口分布")
-                            direction_counts = display_df['direction'].value_counts()
-                            st.bar_chart(direction_counts)
+                        st.subheader("🔀 中转地分布")
+                        # 提取中转地信息进行统计
+                        transit_data = display_df['中转地分析'].value_counts()
+                        # 只显示实际的中转地（排除直飞）
+                        transit_only = transit_data[transit_data.index.str.contains('🔀', na=False)]
+                        if len(transit_only) > 0:
+                            st.bar_chart(transit_only.head(8))
+                        else:
+                            st.info("当前筛选条件下暂无中转航线")
                         
-                        with col2:
-                            st.subheader("✈️ 航空公司分布")
-                            airline_counts = display_df['airline'].value_counts().head(10)
-                            st.bar_chart(airline_counts)
-                            
-                            st.subheader("🔀 中转地分布")
-                            # 提取中转地信息进行统计
-                            transit_data = display_df['中转地分析'].value_counts()
-                            # 只显示实际的中转地（排除直飞）
-                            transit_only = transit_data[transit_data.index.str.contains('🔀', na=False)]
-                            if len(transit_only) > 0:
-                                st.bar_chart(transit_only.head(8))
-                            else:
-                                st.info("当前筛选条件下暂无中转航线")
-                            
-                            st.subheader("🌍 航线类型分布")
-                            route_type_counts = display_df['航线类型'].value_counts()
-                            st.bar_chart(route_type_counts)
+                        st.subheader("🌍 航线类型分布")
+                        route_type_counts = display_df['航线类型'].value_counts()
+                        st.bar_chart(route_type_counts)
                     
-                    # 优化表格显示
-                    st.subheader("📋 详细航线明细")
-                    st.dataframe(
-                        display_df_renamed[display_columns],
-                        use_container_width=True,
-                        height=400
-                    )
+                # 优化表格显示
+                st.subheader("📋 详细航线明细")
+                st.dataframe(
+                    display_df_renamed[display_columns],
+                    use_container_width=True,
+                    height=600  # 增加表格高度以显示更多数据
+                )
+                
+                # 显示数据统计信息和数据来源说明
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    st.info(f"📊 当前显示 {len(display_df_renamed)} 条航线记录")
+                with col2:
+                    with st.expander("📋 数据来源说明"):
+                        st.markdown("""
+                        **数据来源**：
+                        - 📊 每周班次：来自原始Excel数据源
+                        - ✈️ 机场代码：来自Excel "机场—机场" 列
+                        - 🏙️ 城市航线：来自Excel "城市—城市" 列
+                        - 📏 飞行距离：来自Excel原始数据或系统计算
+                        - ⏱️ 飞行时长：来自Excel原始数据或系统计算
+                        """)
             
             else:
                 st.warning("⚠️ 当前筛选条件下没有匹配的航线数据")
