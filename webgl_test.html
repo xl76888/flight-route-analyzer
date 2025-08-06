@@ -1,0 +1,132 @@
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGL支持测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .success { background-color: #d4edda; color: #155724; }
+        .error { background-color: #f8d7da; color: #721c24; }
+        .info { background-color: #d1ecf1; color: #0c5460; }
+        #webgl-canvas {
+            border: 1px solid #ddd;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 WebGL支持测试</h1>
+        <p>此页面用于测试浏览器的WebGL支持情况</p>
+        
+        <div id="test-results"></div>
+        
+        <h3>WebGL渲染测试</h3>
+        <canvas id="webgl-canvas" width="400" height="300"></canvas>
+        
+        <h3>系统信息</h3>
+        <div id="system-info"></div>
+    </div>
+
+    <script>
+        function addResult(message, type) {
+            const container = document.getElementById('test-results');
+            const div = document.createElement('div');
+            div.className = `status ${type}`;
+            div.textContent = message;
+            container.appendChild(div);
+        }
+        
+        function testWebGL() {
+            const canvas = document.getElementById('webgl-canvas');
+            
+            // 测试WebGL 1.0
+            const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+            if (!gl) {
+                addResult('❌ WebGL 1.0 不支持', 'error');
+                return false;
+            }
+            
+            addResult('✅ WebGL 1.0 支持', 'success');
+            
+            // 测试WebGL 2.0
+            const gl2 = canvas.getContext('webgl2');
+            if (gl2) {
+                addResult('✅ WebGL 2.0 支持', 'success');
+            } else {
+                addResult('⚠️ WebGL 2.0 不支持', 'info');
+            }
+            
+            // 获取WebGL信息
+            const renderer = gl.getParameter(gl.RENDERER);
+            const vendor = gl.getParameter(gl.VENDOR);
+            const version = gl.getParameter(gl.VERSION);
+            const shadingLanguageVersion = gl.getParameter(gl.SHADING_LANGUAGE_VERSION);
+            
+            document.getElementById('system-info').innerHTML = `
+                <p><strong>渲染器:</strong> ${renderer}</p>
+                <p><strong>供应商:</strong> ${vendor}</p>
+                <p><strong>WebGL版本:</strong> ${version}</p>
+                <p><strong>着色器语言版本:</strong> ${shadingLanguageVersion}</p>
+                <p><strong>用户代理:</strong> ${navigator.userAgent}</p>
+            `;
+            
+            // 简单的WebGL渲染测试
+            try {
+                gl.clearColor(0.0, 0.5, 1.0, 1.0);
+                gl.clear(gl.COLOR_BUFFER_BIT);
+                addResult('✅ WebGL渲染测试通过', 'success');
+            } catch (e) {
+                addResult(`❌ WebGL渲染测试失败: ${e.message}`, 'error');
+            }
+            
+            return true;
+        }
+        
+        function checkHardwareAcceleration() {
+            // 检查硬件加速
+            const canvas = document.createElement('canvas');
+            const gl = canvas.getContext('webgl');
+            
+            if (gl) {
+                const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+                if (debugInfo) {
+                    const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+                    if (renderer.toLowerCase().includes('software') || 
+                        renderer.toLowerCase().includes('swiftshader')) {
+                        addResult('⚠️ 检测到软件渲染，建议启用硬件加速', 'info');
+                    } else {
+                        addResult('✅ 硬件加速已启用', 'success');
+                    }
+                }
+            }
+        }
+        
+        // 页面加载完成后运行测试
+        window.addEventListener('load', () => {
+            testWebGL();
+            checkHardwareAcceleration();
+        });
+    </script>
+</body>
+</html>

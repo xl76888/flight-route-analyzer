@@ -48,6 +48,8 @@ AIRPORT_COORDS = {
     "乌鲁木齐": [43.9071, 87.4744],
     "URC": [43.9071, 87.4744],
     "拉萨": [29.2978, 90.9119],
+    "芜湖": [31.3260, 118.3721],  # 芜湖宣州机场
+    "素万那普": [13.6900, 100.7501],  # 泰国曼谷素万那普机场
     "鄂州": [30.310, 114.306],
     "EHU": [30.310, 114.306],
     "LXA": [29.2978, 90.9119],
@@ -87,6 +89,18 @@ AIRPORT_COORDS = {
     "NGB": [29.8267, 121.4619],
     "南通": [32.0707, 120.9757],
     "NTG": [32.0707, 120.9757],
+    "泉州": [24.7964, 118.5897],
+    "JJN": [24.7964, 118.5897],
+    "盐城": [33.4256, 120.2031],
+    "YNZ": [33.4256, 120.2031],
+    
+    # 菲律宾机场
+    "安赫莱斯": [15.1859, 120.5602],  # 克拉克国际机场
+    "CRK": [15.1859, 120.5602],
+    "帕拉尼亚克": [14.5086, 121.0194],  # 马尼拉尼诺阿基诺国际机场
+    "MNL": [14.5086, 121.0194],
+    "拉普拉普市": [10.3075, 123.9792],  # 宿务马克坦国际机场
+    "CEB": [10.3075, 123.9792],
     
     # 国际主要机场
     "东京": [35.7647, 140.3864],
@@ -374,12 +388,16 @@ AIRPORT_COORDS = {
     
     # 补充缺失的机场坐标
     "浦东": [31.1443, 121.8083],  # 上海浦东国际机场
+    "上海浦东": [31.1443, 121.8083],  # 上海浦东国际机场
     "斯坦斯特德": [51.8860, 0.2389],  # 伦敦斯坦斯特德机场
     "克拉克": [15.1859, 120.5603],  # 菲律宾克拉克国际机场
     "普雷斯蒂克": [55.5094, -4.5867],  # 格拉斯哥普雷斯蒂克机场
     "菲利普安吉利斯": [15.1859, 120.5603],  # 菲律宾克拉克机场（菲利普安吉利斯）
     "义乌": [29.3447, 120.0322],  # 义乌机场
     "阿斯塔纳": [51.0228, 71.4669],  # 努尔苏丹纳扎尔巴耶夫国际机场
+    "阿勒马克图姆": [24.8851, 55.1614],  # 迪拜阿勒马克图姆国际机场
+    "阿兰达": [59.6519, 17.9186],  # 斯德哥尔摩阿兰达机场
+    "戴高乐": [49.0097, 2.5479],  # 巴黎戴高乐国际机场
     "东米德兰兹": [52.8311, -1.3281],  # 东米德兰兹机场
     "瓦茨拉夫哈维尔": [50.1008, 14.2632]  # 布拉格瓦茨拉夫·哈维尔机场
 }
@@ -402,4 +420,54 @@ def get_airport_coords(city_or_iata):
     
     # 如果找不到，记录警告并返回None
     print(f"警告: 未找到城市 '{city_or_iata}' 的坐标信息")
+    return None
+
+def get_airport_info(city_or_iata):
+    """根据城市名或IATA代码获取机场完整信息（坐标和名称）"""
+    if not city_or_iata:
+        return None
+    
+    city_or_iata = str(city_or_iata).strip()
+    
+    # 直接查找
+    if city_or_iata in AIRPORT_COORDS:
+        coords = AIRPORT_COORDS[city_or_iata]
+        # 查找对应的城市名称（优先返回中文名称）
+        city_name = None
+        for key, value in AIRPORT_COORDS.items():
+            if value == coords:
+                # 优先选择中文名称（非IATA代码）
+                if len(key) > 3 and not key.isupper():
+                    city_name = key
+                    break
+                elif not city_name:  # 如果没有中文名称，使用IATA代码
+                    city_name = key
+        
+        return {
+            'coords': coords,
+            'name': city_name or city_or_iata,
+            'code': city_or_iata if len(city_or_iata) == 3 and city_or_iata.isupper() else ''
+        }
+    
+    # 模糊匹配城市名
+    for key, coords in AIRPORT_COORDS.items():
+        if city_or_iata in key or key in city_or_iata:
+            # 查找对应的城市名称
+            city_name = None
+            for k, v in AIRPORT_COORDS.items():
+                if v == coords:
+                    if len(k) > 3 and not k.isupper():
+                        city_name = k
+                        break
+                    elif not city_name:
+                        city_name = k
+            
+            return {
+                'coords': coords,
+                'name': city_name or key,
+                'code': key if len(key) == 3 and key.isupper() else ''
+            }
+    
+    # 如果找不到，记录警告并返回None
+    print(f"警告: 未找到城市 '{city_or_iata}' 的信息")
     return None

@@ -1,0 +1,206 @@
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>优化的3D地图</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .header {
+            background: #1976d2;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        .map-container {
+            position: relative;
+            height: 600px;
+            width: 100%;
+        }
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255,255,255,0.9);
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            z-index: 1000;
+        }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #1976d2;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .performance-info {
+            padding: 20px;
+            background: #e3f2fd;
+            border-left: 4px solid #1976d2;
+            margin: 20px;
+        }
+        .optimization-tips {
+            padding: 20px;
+            margin: 20px;
+        }
+        .tip {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            margin: 10px 0;
+        }
+        .status {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            z-index: 1001;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🌍 优化的3D地图演示</h1>
+            <p>性能优化版本 - 更快的加载速度</p>
+        </div>
+        
+        <div class="performance-info">
+            <h3>📊 性能优化说明</h3>
+            <p>本版本采用了多项优化技术，包括异步加载、缓存优化、渲染优化等，显著提升了3D地图的加载和交互性能。</p>
+        </div>
+        
+        <div class="map-container">
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <div>正在加载3D地图...</div>
+                <div style="font-size: 12px; color: #666; margin-top: 5px;">首次加载可能需要几秒钟</div>
+            </div>
+            <div class="status" id="status">初始化中...</div>
+            
+            <!-- 优化的3D地图元素 -->
+            <gmp-map-3d 
+                id="optimized-map3d"
+                center="39.9042,116.4074"
+                zoom="10"
+                tilt="45"
+                heading="0"
+                mode="HYBRID"
+                map-id="45c4f1595b0cd27f9feda952"
+                style="width: 100%; height: 100%;"
+            ></gmp-map-3d>
+        </div>
+        
+        <div class="optimization-tips">
+            <h3>⚡ 性能优化技巧</h3>
+            <div class="tip">
+                <strong>🔧 硬件加速:</strong> 确保浏览器启用了GPU硬件加速，这对3D渲染性能至关重要。
+            </div>
+            <div class="tip">
+                <strong>🌐 网络优化:</strong> 使用稳定的网络连接，3D瓦片数据较大，网络质量直接影响加载速度。
+            </div>
+            <div class="tip">
+                <strong>🎯 合理缩放:</strong> 避免过高的缩放级别，高缩放级别需要加载更多详细的3D数据。
+            </div>
+            <div class="tip">
+                <strong>💾 浏览器缓存:</strong> 启用浏览器缓存，重复访问时可以显著提升加载速度。
+            </div>
+        </div>
+    </div>
+    
+    <!-- 异步加载Google Maps API -->
+    <script async defer
+        src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBjsINSEeWNGtKjWNVwOqVPb_RdWgZXBJE&libraries=maps3d&v=beta&callback=initMap">
+    </script>
+    
+    <script>
+        let map3d;
+        let loadStartTime = Date.now();
+        
+        function updateStatus(message) {
+            document.getElementById('status').textContent = message;
+        }
+        
+        function hideLoading() {
+            const loading = document.getElementById('loading');
+            loading.style.opacity = '0';
+            setTimeout(() => {
+                loading.style.display = 'none';
+            }, 300);
+        }
+        
+        function initMap() {
+            updateStatus('API已加载');
+            
+            // 获取3D地图元素
+            map3d = document.getElementById('optimized-map3d');
+            
+            if (map3d) {
+                // 监听地图加载事件
+                map3d.addEventListener('gmp-load', () => {
+                    const loadTime = Date.now() - loadStartTime;
+                    updateStatus(`加载完成 (${loadTime}ms)`);
+                    hideLoading();
+                    console.log(`3D地图加载完成，耗时: ${loadTime}ms`);
+                });
+                
+                // 监听地图错误事件
+                map3d.addEventListener('gmp-error', (event) => {
+                    updateStatus('加载失败');
+                    hideLoading();
+                    console.error('3D地图加载错误:', event.detail);
+                });
+                
+                // 监听地图交互事件
+                map3d.addEventListener('gmp-click', (event) => {
+                    console.log('地图点击:', event.detail);
+                });
+                
+                updateStatus('正在渲染...');
+            } else {
+                updateStatus('地图元素未找到');
+                hideLoading();
+            }
+        }
+        
+        // 性能监控
+        window.addEventListener('load', () => {
+            console.log('页面加载完成');
+        });
+        
+        // 错误处理
+        window.addEventListener('error', (event) => {
+            console.error('页面错误:', event.error);
+            updateStatus('发生错误');
+        });
+    </script>
+</body>
+</html>
+    

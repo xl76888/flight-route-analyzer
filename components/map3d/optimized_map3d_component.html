@@ -1,0 +1,1188 @@
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>优化的3D航线地图</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Microsoft YaHei', sans-serif;
+            background: #f5f5f5;
+            height: 700px !important;
+            min-height: 700px !important;
+            max-height: 700px;
+            overflow: hidden;
+        }
+        
+        #map3d-container {
+            width: 100%;
+            height: 700px;
+            min-height: 700px;
+            position: relative;
+            background: #fff;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        #loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.95);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            transition: opacity 0.3s ease;
+        }
+        
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #e3e3e3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 15px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .loading-text {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+        
+        .status-bar {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            color: #666;
+            z-index: 100;
+            display: none;
+        }
+        
+        .update-indicator {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(52, 152, 219, 0.9);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            z-index: 100;
+            display: none;
+            animation: fadeInOut 2s ease-in-out;
+        }
+        
+        @keyframes fadeInOut {
+            0%, 100% { opacity: 0; }
+            50% { opacity: 1; }
+        }
+        
+        #map3d {
+            width: 100%;
+            height: 100%;
+            display: none;
+        }
+        
+        .error-message {
+            text-align: center;
+            color: #e74c3c;
+            padding: 20px;
+        }
+        
+        .success-message {
+            text-align: center;
+            color: #27ae60;
+            padding: 20px;
+        }
+        
+        .control-panel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 12px;
+            border-radius: 6px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            font-size: 12px;
+            z-index: 200;
+            min-width: 180px;
+        }
+        
+        .control-panel h4 {
+            margin: 0 0 8px 0;
+            color: #333;
+            font-size: 13px;
+        }
+        
+        .control-item {
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .control-item label {
+            color: #666;
+            margin-right: 8px;
+        }
+        
+        .control-item input[type="checkbox"] {
+            margin: 0;
+        }
+        
+        .control-item input[type="range"] {
+            width: 80px;
+            margin: 0;
+        }
+        
+        .legend {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 12px;
+            border-radius: 6px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            font-size: 11px;
+            z-index: 200;
+        }
+        
+        .legend h4 {
+            margin: 0 0 8px 0;
+            color: #333;
+            font-size: 12px;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 4px;
+        }
+        
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 6px;
+            border: 1px solid #ccc;
+        }
+        
+        .legend-line {
+            width: 20px;
+            height: 2px;
+            margin-right: 6px;
+            border-radius: 1px;
+        }
+    </style>
+</head>
+<body>
+    <div id="map3d-container">
+        <!-- 加载状态 -->
+        <div id="loading-overlay">
+            <div class="loading-spinner"></div>
+            <div class="loading-text">正在加载3D地图...</div>
+            <div id="loading-status" style="color: #999; font-size: 12px;">初始化中...</div>
+        </div>
+        
+        <!-- 状态栏 -->
+        <div class="status-bar" id="status-bar">
+            <div>航线: <span id="route-count">0</span> 条</div>
+        </div>
+        
+        <!-- 更新指示器 -->
+        <div class="update-indicator" id="update-indicator">
+            数据已更新
+        </div>
+        
+        <!-- 控制面板 -->
+        <div class="control-panel" id="control-panel">
+            <h4>🎛️ 控制面板</h4>
+            <div class="control-item">
+                <label>动画效果</label>
+                <input type="checkbox" id="animation-toggle" checked onchange="toggleAnimation()">
+            </div>
+            <div class="control-item">
+                <label>动画速度</label>
+                <input type="range" id="animation-speed" min="500" max="5000" value="2000" onchange="updateAnimationSpeed()">
+            </div>
+            <div class="control-item">
+                <label>显示机场</label>
+                <input type="checkbox" id="airport-toggle" checked onchange="toggleAirports()">
+            </div>
+        </div>
+        
+        <!-- 图例 -->
+        <div class="legend" id="legend">
+            <h4>📍 图例说明</h4>
+            <div class="legend-item">
+                <div class="legend-line" style="background-color: #4CAF50;"></div>
+                <span>进口航线</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-line" style="background-color: #FF5722;"></div>
+                <span>出口航线</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: #4CAF50;"></div>
+                <span>进口机场</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: #FF5722;"></div>
+                <span>出口机场</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: #9C27B0;"></div>
+                <span>进出口机场</span>
+            </div>
+        </div>
+        
+        <!-- 3D地图 -->
+        <gmp-map-3d id="map3d"
+            center="39.9042,116.4074"
+            zoom="5"
+            map-id="{{MAP_ID}}"
+            mode="HYBRID"
+            tilt="45"
+            heading="0">
+        </gmp-map-3d>
+    </div>
+    
+    <script>
+        // 全局变量
+        let map3d = null;
+        let isMapInitialized = false;
+        let currentRoutes = [];
+        let routeElements = new Map();
+        let airportMarkers = new Map(); // 机场标记缓存
+        let animationEnabled = true; // 动画开关
+        let animationSpeed = 2000; // 动画速度（毫秒）
+        let loadStartTime = Date.now();
+        
+        // 配置
+        const CONFIG = {{CONFIG}};
+        let ROUTE_DATA = {{ROUTE_DATA}};
+        
+        // 状态更新函数
+        function updateLoadingStatus(text) {
+            const statusElement = document.getElementById('loading-status');
+            if (statusElement) {
+                statusElement.textContent = text;
+            }
+            console.log('加载状态:', text);
+        }
+        
+        function showUpdateIndicator() {
+            const indicator = document.getElementById('update-indicator');
+            if (indicator) {
+                indicator.style.display = 'block';
+                setTimeout(() => {
+                    indicator.style.display = 'none';
+                }, 2000);
+            }
+        }
+        
+        function updateRouteCount(count) {
+            const countElement = document.getElementById('route-count');
+            if (countElement) {
+                countElement.textContent = count;
+            }
+        }
+        
+        // 初始化3D地图
+        async function initMap3D() {
+            console.log('开始初始化3D地图...');
+            updateLoadingStatus('检查API配置...');
+            
+            try {
+                // 检查API密钥
+                if (!CONFIG.apiKey || CONFIG.apiKey === 'YOUR_API_KEY') {
+                    throw new Error('API密钥未配置');
+                }
+                
+                // 动态加载Google Maps API
+                if (typeof google === 'undefined' || !google.maps) {
+                    updateLoadingStatus('加载Google Maps API...');
+                    await loadGoogleMapsAPI();
+                }
+                
+                // 获取地图元素
+                map3d = document.getElementById('map3d');
+                if (!map3d) {
+                    throw new Error('无法找到3D地图容器');
+                }
+                
+                // 检查地图是否已经加载
+                if (map3d.isConnected && map3d.map) {
+                    console.log('地图已经加载，直接调用onMapLoaded');
+                    onMapLoaded();
+                } else {
+                    // 设置事件监听
+                    map3d.addEventListener('gmp-load', onMapLoaded);
+                    map3d.addEventListener('gmp-error', onMapError);
+                    
+                    // 显示地图
+                    map3d.style.display = 'block';
+                    updateLoadingStatus('等待地图加载...');
+                    
+                    // 设置超时检查，如果5秒后还没加载完成，强制调用onMapLoaded
+                    setTimeout(() => {
+                        if (!isMapInitialized) {
+                            console.log('地图加载超时，强制完成初始化');
+                            onMapLoaded();
+                        }
+                    }, 5000);
+                }
+                
+                console.log('3D地图初始化完成');
+                
+            } catch (error) {
+                console.error('3D地图初始化失败:', error);
+                showError('3D地图初始化失败: ' + error.message);
+            }
+        }
+        
+        // 动态加载Google Maps API
+        function loadGoogleMapsAPI() {
+            return new Promise((resolve, reject) => {
+                if (typeof google !== 'undefined' && google.maps) {
+                    resolve();
+                    return;
+                }
+                
+                const script = document.createElement('script');
+                script.src = `https://maps.googleapis.com/maps/api/js?key=${CONFIG.apiKey}&libraries=maps3d,marker&v=beta`;
+                script.async = true;
+                script.defer = true;
+                
+                script.onload = () => {
+                    console.log('Google Maps API加载完成');
+                    resolve();
+                };
+                
+                script.onerror = () => {
+                    console.error('Google Maps API加载失败');
+                    reject(new Error('Google Maps API加载失败，请检查网络连接'));
+                };
+                
+                document.head.appendChild(script);
+            });
+        }
+        
+        // 地图加载完成事件
+        async function onMapLoaded() {
+            const loadTime = Date.now() - loadStartTime;
+            console.log('3D地图加载完成，耗时:', loadTime + 'ms');
+            
+            // 导入必要的库
+            try {
+                const { Map3DElement, Marker3DElement, Marker3DInteractiveElement, PopoverElement } = await google.maps.importLibrary('maps3d');
+                const { PinElement } = await google.maps.importLibrary('marker');
+                window.PinElement = PinElement;
+                window.Marker3DElement = Marker3DElement;
+                window.Marker3DInteractiveElement = Marker3DInteractiveElement;
+                window.PopoverElement = PopoverElement;
+                console.log('Google Maps 3D 和 Marker 库导入成功，包含交互式标记和弹出框');
+            } catch (error) {
+                console.error('导入 Google Maps 库失败:', error);
+            }
+            
+            // 隐藏加载状态
+            const loadingOverlay = document.getElementById('loading-overlay');
+            if (loadingOverlay) {
+                loadingOverlay.style.display = 'none';
+            }
+            
+            // 显示状态栏
+            const statusBar = document.getElementById('status-bar');
+            if (statusBar) {
+                statusBar.style.display = 'block';
+            }
+            
+            isMapInitialized = true;
+            
+            // 发送成功事件到Streamlit
+            window.parent.postMessage({
+                type: 'map3d-ready',
+                data: { loadTime, routeCount: ROUTE_DATA.length }
+            }, '*');
+            
+            // 延迟加载初始航线数据，确保地图完全准备好
+            setTimeout(() => {
+                console.log('开始加载航线数据，数据量:', ROUTE_DATA.length);
+                if (ROUTE_DATA && ROUTE_DATA.length > 0) {
+                    updateRoutes(ROUTE_DATA);
+                } else {
+                    console.warn('没有航线数据可加载');
+                }
+            }, 1500); // 增加延迟时间确保地图完全准备好
+        }
+        
+        // 地图加载错误事件
+        function onMapError(event) {
+            console.error('3D地图加载错误:', event);
+            showError('3D地图加载失败，请检查API密钥和网络连接');
+        }
+        
+        // 显示错误信息
+        function showError(message) {
+            const loadingOverlay = document.getElementById('loading-overlay');
+            if (loadingOverlay) {
+                loadingOverlay.innerHTML = `
+                    <div class="error-message">
+                        <h3>❌ 加载失败</h3>
+                        <p>${message}</p>
+                        <button onclick="location.reload()">重新加载</button>
+                    </div>
+                `;
+            }
+        }
+        
+        // 更新航线数据（核心优化功能）
+        function updateRoutes(newRouteData) {
+            if (!isMapInitialized || !map3d) {
+                console.log('地图未初始化，缓存数据等待加载');
+                ROUTE_DATA = newRouteData;
+                return;
+            }
+            
+            console.log('更新航线数据:', newRouteData.length, '条');
+            
+            // 清除现有航线和机场标记
+            clearRoutes();
+            clearAirportMarkers();
+            
+            // 添加新航线和机场标记
+            if (newRouteData && newRouteData.length > 0) {
+                addRoutes(newRouteData);
+                addAirportMarkers(newRouteData);
+                
+                // 调整视角以适应新数据
+                fitBounds(newRouteData);
+            }
+            
+            // 更新状态
+            updateRouteCount(newRouteData.length);
+            showUpdateIndicator();
+            
+            // 缓存当前数据
+            currentRoutes = newRouteData;
+        }
+        
+        // 清除所有航线
+        function clearRoutes() {
+            routeElements.forEach(element => {
+                if (element && element.remove) {
+                    element.remove();
+                }
+            });
+            routeElements.clear();
+        }
+        
+        // 清除所有机场标记 - 优化版本
+        function clearAirportMarkers() {
+            airportMarkers.forEach(marker => {
+                try {
+                    if (marker) {
+                        if (marker.parentNode) {
+                            marker.parentNode.removeChild(marker);
+                        } else if (marker.remove) {
+                            marker.remove();
+                        }
+                    }
+                } catch (error) {
+                    console.warn('清除机场标记时出错:', error.message);
+                }
+            });
+            airportMarkers.clear();
+            console.log('机场标记已清除');
+        }
+        
+        // 添加机场标记 - 优化版本
+        function addAirportMarkers(routes) {
+            if (!window.google || !window.google.maps || !window.google.maps.maps3d) {
+                console.warn('Google Maps 3D API未加载，跳过机场标记创建');
+                return;
+            }
+            
+            if (!routes || routes.length === 0) {
+                console.log('没有航线数据，跳过机场标记创建');
+                return;
+            }
+            
+            // 收集所有唯一的机场
+            const airports = new Map();
+            
+            routes.forEach(route => {
+                if (isValidRoute(route)) {
+                    try {
+                        // 起始机场
+                        const startKey = `${route.start_lat}_${route.start_lng}`;
+                        if (!airports.has(startKey)) {
+                            airports.set(startKey, {
+                                lat: parseFloat(route.start_lat),
+                                lng: parseFloat(route.start_lng),
+                                name: route.start_airport_name || route.start_airport || route.origin || '未知机场',
+                                code: route.start_airport || route.origin || '',
+                                type: 'origin',
+                                routes: [],
+                                isOrigin: true,
+                                isDestination: false,
+                                isTransit: false
+                            });
+                        }
+                        const startAirport = airports.get(startKey);
+                        startAirport.routes.push(route);
+                        startAirport.isOrigin = true;
+                        
+                        // 目的机场
+                        const endKey = `${route.end_lat}_${route.end_lng}`;
+                        if (!airports.has(endKey)) {
+                            airports.set(endKey, {
+                                lat: parseFloat(route.end_lat),
+                                lng: parseFloat(route.end_lng),
+                                name: route.end_airport_name || route.end_airport || route.destination || '未知机场',
+                                code: route.end_airport || route.destination || '',
+                                type: 'destination',
+                                routes: [],
+                                isOrigin: false,
+                                isDestination: true,
+                                isTransit: false
+                            });
+                        }
+                        const endAirport = airports.get(endKey);
+                        endAirport.routes.push(route);
+                        endAirport.isDestination = true;
+                        
+                        // 检查是否为中转机场（既是起点又是终点）
+                        if (startAirport.isDestination) {
+                            startAirport.isTransit = true;
+                        }
+                        if (endAirport.isOrigin) {
+                            endAirport.isTransit = true;
+                        }
+                    } catch (error) {
+                        console.warn('处理航线机场数据时出错:', error, route);
+                    }
+                }
+            });
+            
+            // 限制机场标记数量，避免性能问题
+            const maxMarkers = 50;
+            let markerCount = 0;
+            let processedCount = 0;
+            
+            // 异步创建机场标记
+            const createMarkersPromises = [];
+            airports.forEach((airport, key) => {
+                if (processedCount >= maxMarkers) {
+                    return; // 跳过剩余的机场
+                }
+                
+                const promise = createAirportMarker(airport, key)
+                    .then(marker => {
+                        if (marker) {
+                            airportMarkers.set(key, marker);
+                            markerCount++;
+                            return marker;
+                        }
+                        return null;
+                    })
+                    .catch(error => {
+                        console.warn('创建机场标记失败:', error.message);
+                        return null;
+                    });
+                
+                createMarkersPromises.push(promise);
+                processedCount++;
+            });
+            
+            // 等待所有标记创建完成
+            Promise.all(createMarkersPromises).then(() => {
+                console.log(`机场标记创建完成: ${markerCount} 个 (总机场数: ${airports.size})`);
+                
+                if (airports.size > maxMarkers) {
+                    console.log(`为了性能考虑，只显示前 ${maxMarkers} 个机场标记`);
+                }
+            });
+            
+            console.log(`机场标记创建完成: ${markerCount} 个 (总机场数: ${airports.size})`);
+            
+            if (airports.size > maxMarkers) {
+                console.log(`为了性能考虑，只显示前 ${maxMarkers} 个机场标记`);
+            }
+        }
+        
+        // 创建机场标记 - 使用Google Maps支持的PinElement
+        async function createAirportMarker(airport, key) {
+            try {
+                // 检查Google Maps 3D API是否可用
+                if (!window.google || !window.google.maps || !window.google.maps.maps3d) {
+                    console.error('Google Maps 3D API未加载，无法创建机场标记');
+                    return null;
+                }
+                
+                // 确保 PinElement 和 Marker3DInteractiveElement 已加载
+                if (!window.PinElement || !window.Marker3DInteractiveElement) {
+                    console.warn('PinElement 或 Marker3DInteractiveElement 未加载，跳过机场标记创建');
+                    return null;
+                }
+                
+                // 设置标记样式
+                const hasImport = airport.routes.some(r => r.direction === '进口');
+                const hasExport = airport.routes.some(r => r.direction === '出口');
+                
+                // 根据机场角色设置颜色和图标
+                let color = '#2196F3'; // 默认蓝色
+                let glyphText = '✈';
+                let roleText = '';
+                
+                if (airport.isTransit) {
+                    color = '#FF9800'; // 橙色 - 中转机场
+                    glyphText = '🔄';
+                    roleText = '中转';
+                } else if (airport.isOrigin && airport.isDestination) {
+                    color = '#9C27B0'; // 紫色 - 既有进口又有出口
+                    glyphText = '⇄';
+                    roleText = '双向';
+                } else if (airport.isOrigin) {
+                    color = '#4CAF50'; // 绿色 - 始发地
+                    glyphText = '🛫';
+                    roleText = '始发';
+                } else if (airport.isDestination) {
+                    color = '#F44336'; // 红色 - 目的地
+                    glyphText = '🛬';
+                    roleText = '目的';
+                }
+                
+                // 如果有进出口信息，优先显示
+                if (hasImport && hasExport) {
+                    color = '#9C27B0'; // 紫色 - 既有进口又有出口
+                    roleText = '进出口';
+                } else if (hasImport) {
+                    color = '#4CAF50'; // 绿色 - 仅进口
+                    roleText = '进口';
+                } else if (hasExport) {
+                    color = '#FF5722'; // 橙红色 - 仅出口
+                    roleText = '出口';
+                }
+                
+                // 3D标记不使用PinElement，而是使用内置的label属性
+                
+                // 创建 PopoverElement 用于悬停提示
+                const popover = new window.google.maps.maps3d.PopoverElement();
+                
+                // 设置悬停提示内容
+                const popoverContent = document.createElement('div');
+                popoverContent.style.cssText = `
+                    padding: 8px 12px;
+                    background: rgba(0, 0, 0, 0.8);
+                    color: white;
+                    border-radius: 4px;
+                    font-size: 12px;
+                    font-family: Arial, sans-serif;
+                    max-width: 200px;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+                `;
+                
+                // 构建悬停提示文本
+                const airportName = airport.name || '未知机场';
+                const airportCode = airport.code || '';
+                const routeCount = airport.routes ? airport.routes.length : 0;
+                const airlines = airport.routes ? [...new Set(airport.routes.map(r => r.airline))].filter(a => a && a.trim()) : [];
+                
+                popoverContent.innerHTML = `
+                    <div style="font-weight: bold; margin-bottom: 4px;">${airportName}</div>
+                    ${airportCode ? `<div style="color: #ccc; margin-bottom: 4px;">代码: ${airportCode}</div>` : ''}
+                    <div style="color: #ccc; margin-bottom: 4px;">类型: ${roleText}机场</div>
+                    <div style="color: #ccc; margin-bottom: 4px;">航线数: ${routeCount}</div>
+                    ${airlines.length > 0 ? `<div style="color: #ccc; font-size: 10px;">航司: ${airlines.slice(0, 3).join(', ')}${airlines.length > 3 ? '...' : ''}</div>` : ''}
+                `;
+                
+                popover.appendChild(popoverContent);
+                
+                // 使用3D地图专用的Marker3DInteractiveElement以支持更多事件
+                const marker = new window.google.maps.maps3d.Marker3DInteractiveElement({
+                    position: {
+                        lat: airport.lat,
+                        lng: airport.lng,
+                        altitude: 200 // 增加高度，使标记更加突出
+                    },
+                    altitudeMode: "ABSOLUTE",
+                    extruded: true,
+                    label: glyphText, // 使用label属性显示文本
+                    gmpPopoverTargetElement: popover
+                });
+                
+                // 添加点击事件显示详细信息
+                marker.addEventListener('gmp-click', () => {
+                    showAirportInfo(airport);
+                });
+                
+                // 存储机场数据到标记元素，便于后续访问
+                marker.airportData = airport;
+                
+                // 将标记和弹出框添加到地图
+                map3d.appendChild(marker);
+                map3d.appendChild(popover);
+                
+                console.log(`✈️ 机场标记创建成功: ${airport.name || airport.code} (${airport.code}) - 角色: ${roleText} - 位置: ${airport.lat}, ${airport.lng}`);
+                return marker;
+                
+            } catch (error) {
+                console.error('创建机场标记失败:', error, airport);
+                return null;
+            }
+        }
+        
+        // 显示机场详细信息 - 增强版本
+        function showAirportInfo(airport) {
+            try {
+                const importRoutes = airport.routes ? airport.routes.filter(r => r.direction === '进口') : [];
+                const exportRoutes = airport.routes ? airport.routes.filter(r => r.direction === '出口') : [];
+                const airlines = airport.routes ? [...new Set(airport.routes.map(r => r.airline))].filter(a => a && a.trim()) : [];
+                
+                // 构建详细的航线信息
+                let routeDetails = '';
+                if (importRoutes.length > 0) {
+                    routeDetails += '\n\n进口航线详情:';
+                    importRoutes.forEach((route, index) => {
+                        routeDetails += `\n  ${index + 1}. ${route.start_airport || route.start_city || '未知'} → ${route.end_airport || route.end_city || '未知'}`;
+                        if (route.airline) routeDetails += ` (${route.airline})`;
+                        if (route.cargo_type) routeDetails += ` - ${route.cargo_type}`;
+                    });
+                }
+                
+                if (exportRoutes.length > 0) {
+                    routeDetails += '\n\n出口航线详情:';
+                    exportRoutes.forEach((route, index) => {
+                        routeDetails += `\n  ${index + 1}. ${route.start_airport || route.start_city || '未知'} → ${route.end_airport || route.end_city || '未知'}`;
+                        if (route.airline) routeDetails += ` (${route.airline})`;
+                        if (route.cargo_type) routeDetails += ` - ${route.cargo_type}`;
+                    });
+                }
+                
+                const info = `🛫 机场详细信息
+
+机场名称: ${airport.name || '未知机场'}
+机场代码: ${airport.code || '无'}
+坐标位置: ${airport.lat?.toFixed(4) || '未知'}, ${airport.lng?.toFixed(4) || '未知'}
+
+📊 航线统计:
+• 总航线数: ${airport.routes ? airport.routes.length : 0} 条
+• 进口航线: ${importRoutes.length} 条
+• 出口航线: ${exportRoutes.length} 条
+• 涉及航司: ${airlines.length > 0 ? airlines.join(', ') : '无'}${routeDetails}`;
+                
+                console.log('机场详细信息:', info);
+                
+                // 创建一个更美观的信息显示窗口
+                const shouldShowDetails = window.confirm(info + '\n\n是否在控制台查看更多技术详情？');
+                if (shouldShowDetails) {
+                    console.group(`🛫 ${airport.name || airport.code} 机场技术详情`);
+                    console.log('完整机场数据:', airport);
+                    if (airport.routes && airport.routes.length > 0) {
+                        console.log('关联航线数据:', airport.routes);
+                    }
+                    console.groupEnd();
+                }
+            } catch (error) {
+                console.error('显示机场信息时出错:', error);
+            }
+        }
+        
+        // 添加航线
+        function addRoutes(routes) {
+            if (!window.google || !window.google.maps || !window.google.maps.maps3d) {
+                console.error('Google Maps 3D API未加载');
+                return;
+            }
+            
+            let validRoutes = 0;
+            let invalidRoutes = 0;
+            
+            routes.forEach((route, index) => {
+                if (isValidRoute(route)) {
+                    try {
+                        const polyline = createRoutePolyline(route, index);
+                        if (polyline) {
+                            routeElements.set(`route_${index}`, polyline);
+                            map3d.appendChild(polyline);
+                            validRoutes++;
+                        }
+                    } catch (error) {
+                        console.error('创建航线失败:', error, route);
+                        invalidRoutes++;
+                    }
+                } else {
+                    invalidRoutes++;
+                }
+            });
+            
+            console.log(`航线加载完成: 有效 ${validRoutes} 条, 无效 ${invalidRoutes} 条`);
+            
+            // 如果没有有效航线，显示警告
+            if (validRoutes === 0 && routes.length > 0) {
+                console.warn('所有航线数据都无效，请检查数据格式');
+                updateLoadingStatus('航线数据无效，请检查数据格式');
+            }
+        }
+        
+        // 创建航线多段线
+        function createRoutePolyline(route, index) {
+            const polyline = new google.maps.maps3d.Polyline3DElement();
+            
+            // 设置坐标
+            const startCoord = {
+                lat: parseFloat(route.start_lat),
+                lng: parseFloat(route.start_lng),
+                altitude: 8000
+            };
+            const endCoord = {
+                lat: parseFloat(route.end_lat),
+                lng: parseFloat(route.end_lng),
+                altitude: 8000
+            };
+            
+            // 根据进出口方向设置坐标顺序
+            let coordinates;
+            if (route.direction === '进口') {
+                // 进口：从目的地到起始地
+                coordinates = [endCoord, startCoord];
+            } else {
+                // 出口：从起始地到目的地
+                coordinates = [startCoord, endCoord];
+            }
+            
+            polyline.coordinates = coordinates;
+            
+            // 设置样式
+            polyline.strokeColor = getRouteColor(route);
+            polyline.strokeWidth = getRouteWidth(route);
+            polyline.strokeOpacity = 0.8;
+            
+            // 添加动画效果
+            if (animationEnabled) {
+                addRouteAnimation(polyline, route, index);
+            }
+            
+            return polyline;
+        }
+        
+        // 添加航线动画效果
+        function addRouteAnimation(polyline, route, index) {
+            // 延迟启动动画，避免所有航线同时开始
+            const delay = (index % 20) * 100; // 每20条航线为一组，组内间隔100ms
+            
+            setTimeout(() => {
+                // 创建动画点
+                const animationDot = createAnimationDot(route);
+                if (animationDot) {
+                    map3d.appendChild(animationDot);
+                    
+                    // 启动动画
+                    startRouteAnimation(animationDot, polyline.coordinates, route);
+                    
+                    // 将动画点与航线关联
+                    const routeKey = `route_${index}`;
+                    if (!routeElements.has(routeKey + '_animation')) {
+                        routeElements.set(routeKey + '_animation', animationDot);
+                    }
+                }
+            }, delay);
+        }
+        
+        // 创建动画点
+        function createAnimationDot(route) {
+            const marker = new google.maps.maps3d.Marker3DElement();
+            
+            // 设置初始位置
+            const startCoord = route.direction === '进口' 
+                ? { lat: parseFloat(route.end_lat), lng: parseFloat(route.end_lng), altitude: 8000 }
+                : { lat: parseFloat(route.start_lat), lng: parseFloat(route.start_lng), altitude: 8000 };
+            
+            marker.position = startCoord;
+            
+            // 创建动画点样式
+            const dot = document.createElement('div');
+            const color = getRouteColor(route);
+            dot.style.cssText = `
+                width: 6px;
+                height: 6px;
+                background-color: ${color};
+                border: 1px solid white;
+                border-radius: 50%;
+                box-shadow: 0 0 10px ${color};
+                animation: pulse 1s infinite;
+            `;
+            
+            // 添加脉冲动画CSS
+            if (!document.getElementById('animation-styles')) {
+                const style = document.createElement('style');
+                style.id = 'animation-styles';
+                style.textContent = `
+                    @keyframes pulse {
+                        0% { transform: scale(1); opacity: 1; }
+                        50% { transform: scale(1.5); opacity: 0.7; }
+                        100% { transform: scale(1); opacity: 1; }
+                    }
+                `;
+                document.head.appendChild(style);
+            }
+            
+            marker.appendChild(dot);
+            return marker;
+        }
+        
+        // 启动航线动画
+        function startRouteAnimation(animationDot, coordinates, route) {
+            if (coordinates.length < 2) return;
+            
+            const startCoord = coordinates[0];
+            const endCoord = coordinates[1];
+            
+            // 计算动画步数
+            const steps = 50;
+            const stepDelay = animationSpeed / steps;
+            let currentStep = 0;
+            
+            const animate = () => {
+                if (currentStep >= steps) {
+                    // 动画完成，重新开始
+                    currentStep = 0;
+                    setTimeout(() => {
+                        if (animationEnabled && animationDot.parentNode) {
+                            animate();
+                        }
+                    }, 1000); // 暂停1秒后重新开始
+                    return;
+                }
+                
+                // 计算当前位置
+                const progress = currentStep / steps;
+                const lat = startCoord.lat + (endCoord.lat - startCoord.lat) * progress;
+                const lng = startCoord.lng + (endCoord.lng - startCoord.lng) * progress;
+                const altitude = startCoord.altitude + (endCoord.altitude - startCoord.altitude) * progress;
+                
+                // 更新位置
+                animationDot.position = { lat, lng, altitude };
+                
+                currentStep++;
+                setTimeout(animate, stepDelay);
+            };
+            
+            animate();
+        }
+        
+        // 获取航线颜色
+        function getRouteColor(route) {
+            // 根据进出口方向设置颜色
+            const direction = route.direction || '出口';
+            
+            // 检查是否为双向航线
+            if (route.is_bidirectional || route.bidirectional) {
+                return '#9C27B0'; // 紫色 - 双向航线
+            }
+            
+            if (direction === '进口') {
+                return '#4CAF50'; // 绿色 - 进口航线
+            } else {
+                return '#FF5722'; // 橙红色 - 出口航线
+            }
+        }
+        
+        // 获取航线宽度
+        function getRouteWidth(route) {
+            const frequency = route.frequency || 1;
+            return Math.max(2, Math.min(6, frequency));
+        }
+        
+        // 验证航线数据 - 放宽验证条件
+        function isValidRoute(route) {
+            if (!route) {
+                console.warn('航线数据为空');
+                return false;
+            }
+            
+            // 检查必需字段是否存在且不为null/undefined
+            const requiredFields = ['start_lat', 'start_lng', 'end_lat', 'end_lng'];
+            for (let field of requiredFields) {
+                if (route[field] === undefined || route[field] === null) {
+                    console.warn(`航线数据缺少字段: ${field}`, route);
+                    return false;
+                }
+            }
+            
+            // 尝试转换为数字
+            try {
+                const startLat = parseFloat(route.start_lat);
+                const startLng = parseFloat(route.start_lng);
+                const endLat = parseFloat(route.end_lat);
+                const endLng = parseFloat(route.end_lng);
+                
+                // 检查是否为有效数字
+                if (isNaN(startLat) || isNaN(startLng) || isNaN(endLat) || isNaN(endLng)) {
+                    console.warn('航线坐标无法转换为数字:', route);
+                    return false;
+                }
+                
+                // 检查坐标范围
+                if (Math.abs(startLat) > 90 || Math.abs(endLat) > 90) {
+                    console.warn('纬度超出范围:', route);
+                    return false;
+                }
+                
+                if (Math.abs(startLng) > 180 || Math.abs(endLng) > 180) {
+                    console.warn('经度超出范围:', route);
+                    return false;
+                }
+                
+                return true;
+            } catch (error) {
+                console.error('验证航线数据时出错:', error, route);
+                return false;
+            }
+        }
+        
+        // 调整视角以适应数据
+        function fitBounds(routes) {
+            if (!routes || routes.length === 0) return;
+            
+            let north = -90, south = 90, east = -180, west = 180;
+            
+            routes.forEach(route => {
+                if (isValidRoute(route)) {
+                    north = Math.max(north, route.start_lat, route.end_lat);
+                    south = Math.min(south, route.start_lat, route.end_lat);
+                    east = Math.max(east, route.start_lng, route.end_lng);
+                    west = Math.min(west, route.start_lng, route.end_lng);
+                }
+            });
+            
+            const center = {
+                lat: (north + south) / 2,
+                lng: (east + west) / 2,
+                altitude: 0
+            };
+            
+            const latDiff = north - south;
+            const lngDiff = east - west;
+            const maxDiff = Math.max(latDiff, lngDiff);
+            const range = Math.max(maxDiff * 111000 * 2, 100000);
+            
+            map3d.flyCameraTo({
+                endCamera: {
+                    center: center,
+                    heading: 0,
+                    tilt: 45,
+                    range: range
+                },
+                durationMillis: 1500
+            });
+        }
+        
+        // 监听来自父页面的数据更新消息
+        window.addEventListener('message', function(event) {
+            if (event.data && event.data.type === 'update-routes') {
+                console.log('收到数据更新消息');
+                updateRoutes(event.data.routes);
+            }
+        });
+        
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('页面加载完成，开始初始化3D地图');
+            setTimeout(initMap3D, 500);
+        });
+        
+        // 错误处理
+        window.addEventListener('error', (event) => {
+            console.error('页面错误:', event.error);
+        });
+        
+        // 控制面板功能函数
+        function toggleAnimation() {
+            const toggle = document.getElementById('animation-toggle');
+            animationEnabled = toggle.checked;
+            console.log('动画效果:', animationEnabled ? '开启' : '关闭');
+            
+            if (!animationEnabled) {
+                // 清除所有动画点
+                routeElements.forEach((element, key) => {
+                    if (key.includes('_animation') && element && element.remove) {
+                        element.remove();
+                    }
+                });
+                // 清理动画点的引用
+                const animationKeys = Array.from(routeElements.keys()).filter(key => key.includes('_animation'));
+                animationKeys.forEach(key => routeElements.delete(key));
+            } else {
+                // 重新添加动画
+                if (currentRoutes && currentRoutes.length > 0) {
+                    currentRoutes.forEach((route, index) => {
+                        if (isValidRoute(route)) {
+                            const routeKey = `route_${index}`;
+                            const polyline = routeElements.get(routeKey);
+                            if (polyline) {
+                                addRouteAnimation(polyline, route, index);
+                            }
+                        }
+                    });
+                }
+            }
+        }
+        
+        function updateAnimationSpeed() {
+            const speedSlider = document.getElementById('animation-speed');
+            animationSpeed = parseInt(speedSlider.value);
+            console.log('动画速度更新为:', animationSpeed, 'ms');
+        }
+        
+        function toggleAirports() {
+            const toggle = document.getElementById('airport-toggle');
+            const showAirports = toggle.checked;
+            console.log('机场显示:', showAirports ? '开启' : '关闭');
+            
+            airportMarkers.forEach(marker => {
+                try {
+                    if (marker) {
+                        if (showAirports) {
+                            if (!marker.parentNode && map3d) {
+                                map3d.appendChild(marker);
+                            }
+                        } else {
+                            if (marker.parentNode) {
+                                marker.parentNode.removeChild(marker);
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.warn('切换机场标记显示状态时出错:', error.message);
+                }
+            });
+        }
+        
+        console.log('优化的3D地图组件已加载');
+        console.log('配置信息:', CONFIG);
+        console.log('初始航线数据:', ROUTE_DATA.length, '条');
+    </script>
+</body>
+</html>

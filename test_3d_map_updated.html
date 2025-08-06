@@ -1,0 +1,226 @@
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D地图配置测试（已更新）</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .success { background-color: #d4edda; color: #155724; }
+        .error { background-color: #f8d7da; color: #721c24; }
+        .info { background-color: #d1ecf1; color: #0c5460; }
+        #map3d {
+            width: 100%;
+            height: 500px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background-color: #0056b3; }
+        .log {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            margin: 10px 0;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🗺️ 3D地图配置测试（已更新）</h1>
+        <p>此页面使用更新后的配置测试3D地图功能</p>
+        
+        <div class="test-section">
+            <h3>📋 配置更新说明</h3>
+            <div class="status info">
+                ✅ 已添加 mode="HYBRID" 属性到所有 gmp-map-3d 元素<br>
+                ✅ 符合Google Maps 3D API最新要求<br>
+                ✅ 移除了已废弃的配置选项
+            </div>
+        </div>
+        
+        <div class="test-section">
+            <h3>🗺️ 3D地图测试</h3>
+            <div id="map-status"></div>
+            <button onclick="test3DMap()">测试3D地图</button>
+            <gmp-map-3d id="map3d" 
+                        center="30.31,114.306" 
+                        zoom="10" 
+                        map-id="45c4f1595b0cd27f9feda952"
+                        mode="HYBRID"
+                        tilt="45"
+                        heading="0">
+            </gmp-map-3d>
+        </div>
+        
+        <div class="test-section">
+            <h3>📝 测试日志</h3>
+            <button onclick="clearLog()">清除日志</button>
+            <div id="debug-log" class="log"></div>
+        </div>
+    </div>
+
+    <script>
+        const CONFIG = {
+            apiKey: 'AIzaSyBoAqo1lCI2FAQIY7A0jTlXI79mC2SO4Kw',
+            mapId: '45c4f1595b0cd27f9feda952'
+        };
+        
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logDiv = document.getElementById('debug-log');
+            const logEntry = document.createElement('div');
+            logEntry.innerHTML = `[${timestamp}] ${type.toUpperCase()}: ${message}`;
+            logEntry.style.color = type === 'error' ? 'red' : type === 'success' ? 'green' : 'black';
+            logDiv.appendChild(logEntry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        function clearLog() {
+            document.getElementById('debug-log').innerHTML = '';
+        }
+        
+        function addStatus(containerId, message, type) {
+            const container = document.getElementById(containerId);
+            const statusDiv = document.createElement('div');
+            statusDiv.className = `status ${type}`;
+            statusDiv.textContent = message;
+            container.appendChild(statusDiv);
+        }
+        
+        async function test3DMap() {
+            const container = document.getElementById('map-status');
+            container.innerHTML = '';
+            
+            log('开始3D地图测试（使用更新后的配置）...');
+            
+            try {
+                // 检查API是否已加载
+                if (!window.google || !window.google.maps) {
+                    addStatus('map-status', '正在加载Google Maps API...', 'info');
+                    await loadGoogleMapsAPI();
+                }
+                
+                addStatus('map-status', '✅ Google Maps API已加载', 'success');
+                
+                // 检查3D地图元素
+                const map3dElement = document.getElementById('map3d');
+                if (!map3dElement) {
+                    throw new Error('找不到3D地图元素');
+                }
+                
+                log('3D地图元素配置：');
+                log(`- center: ${map3dElement.getAttribute('center')}`);
+                log(`- zoom: ${map3dElement.getAttribute('zoom')}`);
+                log(`- map-id: ${map3dElement.getAttribute('map-id')}`);
+                log(`- mode: ${map3dElement.getAttribute('mode')}`);
+                log(`- tilt: ${map3dElement.getAttribute('tilt')}`);
+                
+                addStatus('map-status', '✅ 3D地图元素配置正确', 'success');
+                
+                // 监听地图事件
+                map3dElement.addEventListener('gmp-load', () => {
+                    log('3D地图加载完成！', 'success');
+                    addStatus('map-status', '✅ 3D地图加载成功', 'success');
+                });
+                
+                map3dElement.addEventListener('gmp-error', (event) => {
+                    log(`3D地图错误: ${event.detail}`, 'error');
+                    addStatus('map-status', `❌ 3D地图错误: ${event.detail}`, 'error');
+                });
+                
+                // 设置超时
+                setTimeout(() => {
+                    if (!map3dElement.style.display || map3dElement.style.display === 'none') {
+                        log('3D地图可能仍在加载中...', 'info');
+                        addStatus('map-status', '⏳ 3D地图加载中，请稍候...', 'info');
+                    }
+                }, 5000);
+                
+                log('3D地图测试配置完成');
+                
+            } catch (error) {
+                log(`3D地图测试失败: ${error.message}`, 'error');
+                addStatus('map-status', `❌ 测试失败: ${error.message}`, 'error');
+            }
+        }
+        
+        function loadGoogleMapsAPI() {
+            return new Promise((resolve, reject) => {
+                if (window.google && window.google.maps) {
+                    resolve();
+                    return;
+                }
+                
+                const script = document.createElement('script');
+                script.src = `https://maps.googleapis.com/maps/api/js?key=${CONFIG.apiKey}&libraries=maps3d&v=beta`;
+                script.async = true;
+                script.defer = true;
+                
+                script.onload = () => {
+                    setTimeout(() => {
+                        if (window.google && window.google.maps) {
+                            resolve();
+                        } else {
+                            reject(new Error('Google Maps API初始化失败'));
+                        }
+                    }, 1000);
+                };
+                
+                script.onerror = () => {
+                    reject(new Error('Google Maps API脚本加载失败'));
+                };
+                
+                document.head.appendChild(script);
+            });
+        }
+        
+        // 页面加载完成后自动运行测试
+        window.addEventListener('load', () => {
+            log('页面加载完成，配置已更新');
+            setTimeout(() => {
+                test3DMap();
+            }, 1000);
+        });
+    </script>
+</body>
+</html>

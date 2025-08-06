@@ -1,0 +1,27 @@
+{
+  "google_maps": {
+    "api_key": "AIzaSyBoAqo1lCI2FAQIY7A0jTlXI79mC2SO4Kw",
+    "map_id": "45c4f1595b0cd27f9feda952",
+    "fallback_enabled": true,
+    "timeout": 15,
+    "retry_attempts": 3
+  },
+  "cdn_fallbacks": {
+    "leaflet": {
+      "primary": "https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/",
+      "fallback": "https://unpkg.com/leaflet@1.9.3/dist/",
+      "local": "./static/leaflet/",
+      "marker_icons": {
+        "icon": "https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/images/marker-icon.png",
+        "icon_2x": "https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/images/marker-icon-2x.png",
+        "shadow": "https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/images/marker-shadow.png"
+      }
+    }
+  },
+  "network_settings": {
+    "connection_timeout": 15,
+    "read_timeout": 30,
+    "max_retries": 3,
+    "retry_delay": 2
+  }
+}

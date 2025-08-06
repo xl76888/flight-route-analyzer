@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D地图调试工具</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .warning { background-color: #fff3cd; color: #856404; border: 1px solid #ffeaa7; }
+        .info { background-color: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+        #map3d {
+            width: 100%;
+            height: 500px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background-color: #0056b3; }
+        button:disabled { background-color: #6c757d; cursor: not-allowed; }
+        .log {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            margin: 10px 0;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 3D地图调试工具</h1>
+        <p>此工具用于诊断Google Maps 3D API的加载和渲染问题</p>
+        
+        <div class="test-section">
+            <h3>📋 系统检查</h3>
+            <div id="system-status"></div>
+            <button onclick="checkSystem()">开始系统检查</button>
+        </div>
+        
+        <div class="test-section">
+            <h3>🔑 API配置测试</h3>
+            <div id="api-status"></div>
+            <button onclick="testAPI()">测试API配置</button>
+        </div>
+        
+        <div class="test-section">
+            <h3>🗺️ 3D地图测试</h3>
+            <div id="map-status"></div>
+            <button onclick="test3DMap()" id="map-test-btn">测试3D地图</button>
+            <gmp-map-3d id="map3d" center="30.31,114.306" zoom="10" map-id="45c4f1595b0cd27f9feda952" mode="HYBRID"></gmp-map-3d>
+        </div>
+        
+        <div class="test-section">
+            <h3>📝 详细日志</h3>
+            <button onclick="clearLog()">清除日志</button>
+            <div id="debug-log" class="log"></div>
+        </div>
+    </div>
+
+    <script>
+        // 配置信息
+        const CONFIG = {
+            apiKey: 'AIzaSyBoAqo1lCI2FAQIY7A0jTlXI79mC2SO4Kw',
+            mapId: '45c4f1595b0cd27f9feda952'
+        };
+        
+        // 日志函数
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logDiv = document.getElementById('debug-log');
+            const logEntry = document.createElement('div');
+            logEntry.innerHTML = `[${timestamp}] ${type.toUpperCase()}: ${message}`;
+            logEntry.style.color = type === 'error' ? 'red' : type === 'success' ? 'green' : type === 'warning' ? 'orange' : 'black';
+            logDiv.appendChild(logEntry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+            console.log(`[${timestamp}] ${type.toUpperCase()}: ${message}`);
+        }
+        
+        function clearLog() {
+            document.getElementById('debug-log').innerHTML = '';
+        }
+        
+        function addStatus(containerId, message, type) {
+            const container = document.getElementById(containerId);
+            const statusDiv = document.createElement('div');
+            statusDiv.className = `status ${type}`;
+            statusDiv.textContent = message;
+            container.appendChild(statusDiv);
+        }
+        
+        // 系统检查
+        function checkSystem() {
+            const container = document.getElementById('system-status');
+            container.innerHTML = '';
+            
+            log('开始系统检查...');
+            
+            // 检查浏览器支持
+            const isEdge = navigator.userAgent.includes('Edg');
+            const isChrome = navigator.userAgent.includes('Chrome');
+            const supportedBrowser = isEdge || isChrome;
+            
+            addStatus('system-status', 
+                `浏览器: ${navigator.userAgent.split(' ')[0]} ${supportedBrowser ? '✅ 支持' : '❌ 不支持'}`, 
+                supportedBrowser ? 'success' : 'error'
+            );
+            
+            // 检查WebGL支持
+            const canvas = document.createElement('canvas');
+            const webgl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+            const hasWebGL = !!webgl;
+            
+            addStatus('system-status', 
+                `WebGL支持: ${hasWebGL ? '✅ 可用' : '❌ 不可用'}`, 
+                hasWebGL ? 'success' : 'error'
+            );
+            
+            // 检查网络连接
+            addStatus('system-status', 
+                `网络状态: ${navigator.onLine ? '✅ 在线' : '❌ 离线'}`, 
+                navigator.onLine ? 'success' : 'error'
+            );
+            
+            log('系统检查完成');
+        }
+        
+        // API配置测试
+        async function testAPI() {
+            const container = document.getElementById('api-status');
+            container.innerHTML = '';
+            
+            log('开始API配置测试...');
+            
+            // 检查API密钥格式
+            const apiKeyValid = CONFIG.apiKey && CONFIG.apiKey.startsWith('AIza') && CONFIG.apiKey.length > 30;
+            addStatus('api-status', 
+                `API密钥格式: ${apiKeyValid ? '✅ 有效' : '❌ 无效'}`, 
+                apiKeyValid ? 'success' : 'error'
+            );
+            
+            // 检查地图ID格式
+            const mapIdValid = CONFIG.mapId && CONFIG.mapId.length > 10;
+            addStatus('api-status', 
+                `地图ID格式: ${mapIdValid ? '✅ 有效' : '❌ 无效'}`, 
+                mapIdValid ? 'success' : 'error'
+            );
+            
+            // 测试API连接
+            try {
+                const testUrl = `https://maps.googleapis.com/maps/api/js?key=${CONFIG.apiKey}&libraries=maps3d&v=beta`;
+                const response = await fetch(testUrl, { method: 'HEAD' });
+                const apiConnectable = response.ok;
+                
+                addStatus('api-status', 
+                    `API连接测试: ${apiConnectable ? '✅ 成功' : '❌ 失败'}`, 
+                    apiConnectable ? 'success' : 'error'
+                );
+                
+                log(`API连接测试: ${response.status} ${response.statusText}`);
+            } catch (error) {
+                addStatus('api-status', `API连接测试: ❌ 网络错误`, 'error');
+                log(`API连接错误: ${error.message}`, 'error');
+            }
+        }
+        
+        // 3D地图测试
+        async function test3DMap() {
+            const container = document.getElementById('map-status');
+            const button = document.getElementById('map-test-btn');
+            container.innerHTML = '';
+            button.disabled = true;
+            
+            log('开始3D地图测试...');
+            
+            try {
+                // 加载Google Maps API
+                addStatus('map-status', '正在加载Google Maps API...', 'info');
+                await loadGoogleMapsAPI();
+                addStatus('map-status', '✅ Google Maps API加载成功', 'success');
+                
+                // 初始化3D地图
+                addStatus('map-status', '正在初始化3D地图...', 'info');
+                await init3DMap();
+                addStatus('map-status', '✅ 3D地图初始化成功', 'success');
+                
+                log('3D地图测试完成', 'success');
+            } catch (error) {
+                addStatus('map-status', `❌ 3D地图测试失败: ${error.message}`, 'error');
+                log(`3D地图测试失败: ${error.message}`, 'error');
+                console.error('3D地图测试错误:', error);
+            } finally {
+                button.disabled = false;
+            }
+        }
+        
+        // 加载Google Maps API
+        function loadGoogleMapsAPI() {
+            return new Promise((resolve, reject) => {
+                if (window.google && window.google.maps) {
+                    log('Google Maps API已存在');
+                    resolve();
+                    return;
+                }
+                
+                const script = document.createElement('script');
+                script.src = `https://maps.googleapis.com/maps/api/js?key=${CONFIG.apiKey}&libraries=maps3d&v=beta`;
+                script.async = true;
+                script.defer = true;
+                
+                script.onload = () => {
+                    log('Google Maps API脚本加载完成');
+                    // 等待API完全初始化
+                    setTimeout(() => {
+                        if (window.google && window.google.maps) {
+                            log('Google Maps API初始化完成');
+                            resolve();
+                        } else {
+                            reject(new Error('Google Maps API初始化失败'));
+                        }
+                    }, 1000);
+                };
+                
+                script.onerror = () => {
+                    reject(new Error('Google Maps API脚本加载失败'));
+                };
+                
+                document.head.appendChild(script);
+                log('开始加载Google Maps API脚本...');
+            });
+        }
+        
+        // 初始化3D地图
+        function init3DMap() {
+            return new Promise((resolve, reject) => {
+                try {
+                    const map3dElement = document.getElementById('map3d');
+                    
+                    if (!map3dElement) {
+                        reject(new Error('找不到3D地图容器'));
+                        return;
+                    }
+                    
+                    // 检查3D Maps库是否可用
+                    if (!customElements.get('gmp-map-3d')) {
+                        reject(new Error('3D Maps组件未注册'));
+                        return;
+                    }
+                    
+                    // 监听地图加载事件
+                    map3dElement.addEventListener('gmp-load', () => {
+                        log('3D地图加载完成事件触发');
+                        resolve();
+                    });
+                    
+                    map3dElement.addEventListener('gmp-error', (event) => {
+                        log(`3D地图错误事件: ${event.detail}`, 'error');
+                        reject(new Error(`3D地图加载错误: ${event.detail}`));
+                    });
+                    
+                    // 设置超时
+                    setTimeout(() => {
+                        reject(new Error('3D地图加载超时'));
+                    }, 15000);
+                    
+                    log('3D地图组件配置完成，等待加载...');
+                    
+                } catch (error) {
+                    reject(error);
+                }
+            });
+        }
+        
+        // 页面加载完成后自动运行系统检查
+        window.addEventListener('load', () => {
+            log('页面加载完成，开始自动检查...');
+            setTimeout(checkSystem, 500);
+        });
+        
+        // 捕获全局错误
+        window.addEventListener('error', (event) => {
+            log(`全局错误: ${event.error?.message || event.message}`, 'error');
+        });
+        
+        window.addEventListener('unhandledrejection', (event) => {
+            log(`未处理的Promise拒绝: ${event.reason}`, 'error');
+        });
+    </script>
+</body>
+</html>

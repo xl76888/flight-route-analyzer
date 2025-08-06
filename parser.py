@@ -41,6 +41,9 @@ def detect_table_structure(df: pd.DataFrame) -> Dict[str, Any]:
         'frequency_col': None,
         'reg_col': None,
         'age_col': None,
+        'speed_col': None,
+        'weekly_frequency_col': None,
+        'import_export_cities_col': None,
         'flight_time_cols': [],
         'flight_distance_cols': [],
         'special_col': None,
@@ -56,22 +59,43 @@ def detect_table_structure(df: pd.DataFrame) -> Dict[str, Any]:
         'destination': ['终点', '目的地', '到达地', 'destination', 'arrival', '降落'],
         'aircraft': ['机型', '飞机型号', 'aircraft', 'plane', '机种'],
         'flight_number': ['航班号', '班次', 'flight', 'number'],
-        'frequency': ['频率', '班期', 'frequency', '运营'],
-        'reg': ['注册号', 'reg', '机号', '尾号'],
-        'age': ['机龄', 'age', '年龄'],
+        'frequency': ['频率', '班期', 'frequency', '运营', '每周班次', '每周往返班次', '班次'],
+        'reg': ['注册号', 'reg', '机号', '尾号', '飞机注册号'],
+        'age': ['机龄', 'age', '年龄', '飞机年龄'],
+        'speed': ['速度', 'speed', '飞行速度', '巡航速度', '最大速度'],
+        'weekly_frequency': ['每周班次', '每周往返班次', '周班次', 'weekly'],
         'flight_time': ['飞行时长', '飞行时间', 'time', '时长'],
         'flight_distance': ['飞行距离', '距离', 'distance', '里程'],
-        'special': ['特殊', '备注', '说明', 'special', 'note']
+        'special': ['特殊', '备注', '说明', 'special', 'note'],
+        'import_export_cities': ['进出口', '城市', '进出口城市', '城市对', '航线城市', '起终点', '城市-城市']
     }
     
     # 检测列映射
+    print(f"\n=== 开始检测列映射 ===")
+    print(f"所有列名: {list(df.columns)}")
+    
     for col in df.columns:
         col_str = str(col).lower().strip()
+        print(f"检测列: {col} -> {col_str}")
         
         for key, keywords in column_keywords.items():
             if any(keyword in col_str for keyword in keywords):
+                print(f"  匹配到 {key}: {[kw for kw in keywords if kw in col_str]}")
                 if key == 'route':
                     structure['route_cols'].append(col)
+                    print(f"  添加到route_cols: {col}")
+                elif key == 'airline' and not structure['airline_col']:
+                    structure['airline_col'] = col
+                elif key == 'aircraft' and not structure['aircraft_col']:
+                    structure['aircraft_col'] = col
+                elif key == 'reg' and not structure['reg_col']:
+                    structure['reg_col'] = col
+                elif key == 'age' and not structure['age_col']:
+                    structure['age_col'] = col
+                elif key == 'speed' and not structure['speed_col']:
+                    structure['speed_col'] = col
+                elif key == 'weekly_frequency' and not structure['weekly_frequency_col']:
+                    structure['weekly_frequency_col'] = col
                 elif key == 'flight_time':
                     structure['flight_time_cols'].append(col)
                 elif key == 'flight_distance':
@@ -221,16 +245,20 @@ def determine_direction(origin: str, destination: str) -> str:
 def extract_route_info(row: pd.Series, structure: Dict[str, Any]) -> List[Dict[str, Any]]:
     """从行数据中提取航线信息"""
     routes = []
+    print(f"\n=== 提取航线信息 ===")
+    print(f"route_cols: {structure['route_cols']}")
     
     # 优先使用明确的起点终点列
     if structure['origin_col'] and structure['destination_col']:
         origin = row.get(structure['origin_col'])
         destination = row.get(structure['destination_col'])
+        print(f"使用明确的起点终点列: {structure['origin_col']} -> {origin}, {structure['destination_col']} -> {destination}")
         
         if pd.notna(origin) and pd.notna(destination):
             origin_str = str(origin).strip()
             destination_str = str(destination).strip()
             direction = determine_direction(origin_str, destination_str)
+            print(f"  添加航线: {origin_str} -> {destination_str}, 方向: {direction}")
             
             routes.append({
                 'origin': origin_str,
@@ -242,22 +270,54 @@ def extract_route_info(row: pd.Series, structure: Dict[str, Any]) -> List[Dict[s
     for route_col in structure['route_cols']:
         if route_col in row.index and pd.notna(row[route_col]):
             route_text = str(row[route_col]).strip()
+            print(f"处理航线列 {route_col}: {route_text}")
+            
+            # 根据列名确定方向
+            direction = '出口'  # 默认
+            col_name = str(route_col).lower()
+            if '进口' in col_name:
+                direction = '进口'
+            elif '出口' in col_name:
+                direction = '出口'
+            print(f"  确定方向: {direction}")
             
             # 解析航线文本
-            segments = parse_route_text(route_text)
-            for origin_info, dest_info in segments:
-                origin_name = origin_info['name']
-                dest_name = dest_info['name']
-                direction = determine_direction(origin_name, dest_name)
-                
-                routes.append({
-                    'origin': origin_name,
-                    'destination': dest_name,
-                    'direction': direction,
-                    'origin_iata': origin_info['iata'],
-                    'dest_iata': dest_info['iata']
-                })
+            if '—' in route_text or '-' in route_text:
+                # 处理城市对格式：如"上海—纽约"
+                separator = '—' if '—' in route_text else '-'
+                parts = route_text.split(separator)
+                print(f"  使用分隔符 '{separator}' 分割: {parts}")
+                if len(parts) == 2:
+                    origin_name = parts[0].strip()
+                    dest_name = parts[1].strip()
+                    print(f"  添加航线: {origin_name} -> {dest_name}")
+                    
+                    routes.append({
+                        'origin': origin_name,
+                        'destination': dest_name,
+                        'direction': direction,
+                        'origin_iata': '',
+                        'dest_iata': ''
+                    })
+            else:
+                # 尝试原有的解析方法
+                print(f"  使用parse_route_text解析")
+                segments = parse_route_text(route_text)
+                print(f"  解析得到 {len(segments)} 个航段")
+                for origin_info, dest_info in segments:
+                    origin_name = origin_info['name']
+                    dest_name = dest_info['name']
+                    print(f"  添加航线: {origin_name} -> {dest_name}")
+                    
+                    routes.append({
+                        'origin': origin_name,
+                        'destination': dest_name,
+                        'direction': direction,
+                        'origin_iata': origin_info['iata'],
+                        'dest_iata': dest_info['iata']
+                    })
     
+    print(f"总共提取到 {len(routes)} 条航线")
     return routes
 
 def load_data(files):
@@ -408,12 +468,29 @@ def load_data(files):
                             flight_distance_value = str(row[dist_col])
                             break
                     
+                    # 获取速度和每周班次数据
+                    speed_value = ''
+                    if structure['speed_col'] and structure['speed_col'] in row.index:
+                        speed_value = row[structure['speed_col']] if pd.notna(row[structure['speed_col']]) else ''
+                    
+                    weekly_frequency_value = ''
+                    if structure['weekly_frequency_col'] and structure['weekly_frequency_col'] in row.index:
+                        weekly_frequency_value = row[structure['weekly_frequency_col']] if pd.notna(row[structure['weekly_frequency_col']]) else ''
+                    
+                    # 获取进出口城市数据
+                    import_export_cities_value = ''
+                    if structure['import_export_cities_col'] and structure['import_export_cities_col'] in row.index:
+                        import_export_cities_value = row[structure['import_export_cities_col']] if pd.notna(row[structure['import_export_cities_col']]) else ''
+                    
                     all_rows.append({
                         "direction": route_info.get('direction', '出口'),
                         "airline": str(airline_value).strip(),
                         "reg": str(reg_value).strip(),
                         "aircraft": str(aircraft_value).strip(),
                         "age": str(age_value).strip(),
+                        "speed": str(speed_value).strip(),
+                        "weekly_frequency": str(weekly_frequency_value).strip(),
+                        "import_export_cities": str(import_export_cities_value).strip(),
                         "origin": route_info['origin'],
                         "origin_iata": route_info.get('origin_iata', ''),
                         "destination": route_info['destination'],

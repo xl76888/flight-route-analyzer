@@ -48,6 +48,10 @@ CITY_NAME_MAPPING = {
     '哈尔滨': '哈尔滨',
     '长春': '长春',
     '南宁': '南宁',
+    
+    # 常见拼写错误映射
+    '日本大版': '大阪',
+    '日本大坂': '大阪',
     '南通': '南通',
     '无锡': '无锡',
     '宁波': '宁波',
@@ -121,7 +125,12 @@ DOMESTIC_CITIES = {
     '苏州', '温州', '厦门', '泉州', '佛山', '东莞', '中山', '珠海', '汕头', '湛江',
     '惠州', '江门', '茂名', '肇庆', '梅州', '韶关', '河源', '阳江', '清远', '潮州',
     '揭阳', '云浮', '汕尾', '宜昌', '襄阳', '荆州', '黄冈', '孝感', '十堰', '随州',
-    '恩施', '黄石', '咸宁', '鄂州', '荆门', '仙桃', '潜江', '天门', '神农架'
+    '恩施', '黄石', '咸宁', '鄂州', '荆门', '仙桃', '潜江', '天门', '神农架',
+    # 补充缺失的国内城市
+    '芜湖', '盐城', '淮安', '连云港', '扬州', '镇江', '泰州', '宿迁',
+    '嘉兴', '湖州', '绍兴', '金华', '衢州', '舟山', '台州', '丽水',
+    '蚌埠', '淮南', '马鞍山', '淮北', '铜陵', '安庆', '黄山', '滁州',
+    '阜阳', '宿州', '六安', '亳州', '池州', '宣城'
 }
 
 # 国际城市列表
@@ -204,7 +213,13 @@ INTERNATIONAL_CITIES = {
     '义乌', '巴库比纳', '巴库比钠', '贾特拉帕蒂希瓦',
     '英迪拉甘地', '马德里巴拉哈斯', '普雷斯蒂克', '斯坦斯特德',
     '肯尼迪', '成田', '浦东', '白云', '咸阳', '萧山', '龙湾',
-    '长水', '南阳', '晋江', '兴东'
+    '长水', '南阳', '晋江', '兴东',
+    # 添加在数据中发现的缺失城市
+    '达卡', '素万那普', '卡拉干达', '奥斯陆', '哥本哈根',
+    '安赫莱斯', '克拉克', '帕拉尼亚克', '拉普拉普市',
+    '麦克坦', '马克坦', '尼诺阿基诺', '阿勒马克图姆',
+    '扎阿布扎比', '槟榔屿州', '槟城州', '万塔市',
+    '伦敦斯坦斯特德', '英格兰东米德兰兹', '哈利法克斯'
 }
 
 def is_valid_city(city_name: str) -> bool:
@@ -236,6 +251,90 @@ def normalize_city_name(city_name: str) -> str:
     # 应用映射
     if city_str in CITY_NAME_MAPPING:
         return CITY_NAME_MAPPING[city_str]
+    
+    # 处理带有国家前缀的城市名称
+    # 例如: "日本东京" -> "东京", "韩国首尔" -> "首尔"
+    country_city_patterns = [
+        r'^日本(.+)$',
+        r'^韩国(.+)$', 
+        r'^美国(.+)$',
+        r'^德国(.+)$',
+        r'^英国(.+)$',
+        r'^法国(.+)$',
+        r'^荷兰(.+)$',
+        r'^比利时(.+)$',
+        r'^丹麦(.+)$',
+        r'^挪威(.+)$',
+        r'^瑞典(.+)$',
+        r'^芬兰(.+)$',
+        r'^意大利(.+)$',
+        r'^西班牙(.+)$',
+        r'^葡萄牙(.+)$',
+        r'^俄罗斯(.+)$',
+        r'^加拿大(.+)$',
+        r'^澳大利亚(.+)$',
+        r'^新西兰(.+)$',
+        r'^泰国(.+)$',
+        r'^越南(.+)$',
+        r'^马来西亚(.+)$',
+        r'^新加坡(.+)$',
+        r'^印度尼西亚(.+)$',
+        r'^菲律宾(.+)$',
+        r'^印度(.+)$',
+        r'^孟加拉(.+)$',
+        r'^巴基斯坦(.+)$',
+        r'^阿联酋(.+)$',
+        r'^沙特阿拉伯(.+)$',
+        r'^土耳其(.+)$',
+        r'^埃及(.+)$',
+        r'^南非(.+)$',
+        r'^肯尼亚(.+)$',
+        r'^埃塞俄比亚(.+)$',
+        r'^巴西(.+)$',
+        r'^阿根廷(.+)$',
+        r'^智利(.+)$',
+        r'^哈萨克斯坦(.+)$',
+        r'^乌兹别克斯坦(.+)$',
+        r'^吉尔吉斯斯坦(.+)$',
+        r'^塔吉克斯坦(.+)$',
+        r'^土库曼斯坦(.+)$',
+        r'^阿塞拜疆(.+)$',
+        r'^格鲁吉亚(.+)$',
+        r'^亚美尼亚(.+)$'
+    ]
+    
+    for pattern in country_city_patterns:
+        match = re.match(pattern, city_str)
+        if match:
+            extracted_city = match.group(1)
+            # 检查提取的城市名是否在映射中
+            if extracted_city in CITY_NAME_MAPPING:
+                return CITY_NAME_MAPPING[extracted_city]
+            return extracted_city
+    
+    # 处理复合路线名称，例如: "哈萨克斯坦卡拉干达州-挪威奥斯陆"
+    # 取第一个有效的城市名称
+    if '-' in city_str:
+        parts = city_str.split('-')
+        for part in parts:
+            part = part.strip()
+            # 直接检查是否在映射中
+            if part in CITY_NAME_MAPPING:
+                candidate = CITY_NAME_MAPPING[part]
+                if candidate in (DOMESTIC_CITIES | INTERNATIONAL_CITIES):
+                    return candidate
+            # 尝试提取国家前缀
+            for pattern in country_city_patterns:
+                match = re.match(pattern, part)
+                if match:
+                    extracted_city = match.group(1)
+                    if extracted_city in CITY_NAME_MAPPING:
+                        extracted_city = CITY_NAME_MAPPING[extracted_city]
+                    if extracted_city in (DOMESTIC_CITIES | INTERNATIONAL_CITIES):
+                        return extracted_city
+            # 直接检查是否在城市列表中
+            if part in (DOMESTIC_CITIES | INTERNATIONAL_CITIES):
+                return part
     
     return city_str
 

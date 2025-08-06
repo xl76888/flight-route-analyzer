@@ -48,6 +48,19 @@ Thumbs.db
 
 # Data files (可选择性忽略)
 # data/*.csv
+
+# Streamlit secrets (包含API密钥等敏感信息)
+.streamlit/secrets.toml
+.streamlit/config.toml
+
+# 环境变量文件
+.env
+.env.local
+.env.production
+
+# Google Maps API 相关
+config/google_maps_api_key.txt
+config/api_keys.json
 # data/*.xlsx
 
 # Temporary files

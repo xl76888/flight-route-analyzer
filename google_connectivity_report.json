@@ -1,0 +1,92 @@
+{
+  "timestamp": "2025-07-31T11:09:55.864893",
+  "overall_status": "limited",
+  "dns_resolution": {
+    "maps.googleapis.com": {
+      "status": "success",
+      "ip_addresses": [
+        "142.250.217.74",
+        "142.250.217.106",
+        "142.251.215.234",
+        "142.250.73.74",
+        "142.250.73.106",
+        "142.250.73.138",
+        "142.250.69.170",
+        "142.251.33.74"
+      ],
+      "resolve_time_ms": 37.22
+    },
+    "fonts.googleapis.com": {
+      "status": "success",
+      "ip_addresses": [
+        "114.250.63.33"
+      ],
+      "resolve_time_ms": 17.41
+    },
+    "www.google.com": {
+      "status": "success",
+      "ip_addresses": [
+        "31.13.73.9"
+      ],
+      "resolve_time_ms": 18.17
+    },
+    "googleapis.com": {
+      "status": "success",
+      "ip_addresses": [
+        "142.251.33.68"
+      ],
+      "resolve_time_ms": 17.89
+    }
+  },
+  "http_connectivity": {
+    "maps_api": {
+      "status": "timeout",
+      "error": "请求超时"
+    },
+    "maps_js_api": {
+      "status": "timeout",
+      "error": "请求超时"
+    },
+    "fonts_api": {
+      "status": "success",
+      "status_code": 404,
+      "response_time_ms": 366.33,
+      "headers": {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-cache, no-store, max-age=0, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "Mon, 01 Jan 1990 00:00:00 GMT",
+        "Date": "Thu, 31 Jul 2025 03:12:35 GMT",
+        "Content-Length": "0",
+        "Server": "ESF",
+        "X-XSS-Protection": "0",
+        "X-Content-Type-Options": "nosniff",
+        "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+      }
+    },
+    "google_main": {
+      "status": "timeout",
+      "error": "请求超时"
+    },
+    "googleapis_main": {
+      "status": "timeout",
+      "error": "请求超时"
+    }
+  },
+  "api_endpoints": {
+    "geocoding": {
+      "status": "error",
+      "error": "HTTPSConnectionPool(host='maps.googleapis.com', port=443): Max retries exceeded with url: /maps/api/geocode/json?address=Beijing%2C+China&key=test_key (Caused by ConnectTimeoutError(<urllib3.connection.HTTPSConnection object at 0x000001A734639D50>, 'Connection to maps.googleapis.com timed out. (connect timeout=10)'))"
+    },
+    "maps_js": {
+      "status": "error",
+      "error": "HTTPSConnectionPool(host='maps.googleapis.com', port=443): Max retries exceeded with url: /maps/api/js?key=test_key (Caused by ConnectTimeoutError(<urllib3.connection.HTTPSConnection object at 0x000001A73463A590>, 'Connection to maps.googleapis.com timed out. (connect timeout=10)'))"
+    }
+  },
+  "recommendations": [
+    "检查防火墙设置，确保允许HTTPS连接",
+    "如果在企业网络中，联系网络管理员检查代理设置",
+    "网络延迟较高，考虑使用VPN或更换网络",
+    "API端点访问受限，检查API密钥配置"
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "timestamp": "2025-07-31T11:17:42.486590",
+  "api_key_status": "warning",
+  "billing_status": "active",
+  "quota_status": "error",
+  "services_status": {
+    "3d_maps_api": "error"
+  },
+  "recommendations": [
+    "验证项目是否关联到有效的计费账户",
+    "检查网络连接",
+    "确认所需的API服务已启用",
+    "检查Google Cloud Console中的API密钥设置"
+  ],
+  "errors": [
+    "网络请求超时"
+  ]
+}

@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Google Maps API 测试</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        #map { height: 400px; width: 100%; margin: 20px 0; }
+        .status { padding: 10px; margin: 10px 0; border-radius: 5px; }
+        .success { background-color: #d4edda; color: #155724; }
+        .error { background-color: #f8d7da; color: #721c24; }
+        .info { background-color: #d1ecf1; color: #0c5460; }
+    </style>
+</head>
+<body>
+    <h1>🗺️ Google Maps API 连接测试</h1>
+    
+    <div id="status" class="status info">
+        📡 正在测试 Google Maps API 连接...
+    </div>
+    
+    <div id="map"></div>
+    
+    <div id="details">
+        <h3>📊 测试详情</h3>
+        <ul id="test-results"></ul>
+    </div>
+
+    <script>
+        const API_KEY = 'AIzaSyBoAqo1lCI2FAQIY7A0jTlXI79mC2SO4Kw'; // 实际API密钥
+        const MAP_ID = '45c4f1595b0cd27f9feda952';
+        
+        function addTestResult(message, isSuccess = true) {
+            const ul = document.getElementById('test-results');
+            const li = document.createElement('li');
+            li.innerHTML = `${isSuccess ? '✅' : '❌'} ${message}`;
+            li.style.color = isSuccess ? '#155724' : '#721c24';
+            ul.appendChild(li);
+        }
+        
+        function updateStatus(message, type = 'info') {
+            const statusDiv = document.getElementById('status');
+            statusDiv.className = `status ${type}`;
+            statusDiv.innerHTML = message;
+        }
+        
+        // 测试1: 检查Google Maps API脚本加载
+        function testAPILoad() {
+            return new Promise((resolve) => {
+                const script = document.createElement('script');
+                script.src = `https://maps.googleapis.com/maps/api/js?key=${API_KEY}&map_ids=${MAP_ID}&v=3.55`;
+                
+                script.onload = () => {
+                    addTestResult('Google Maps API 脚本加载成功');
+                    resolve(true);
+                };
+                
+                script.onerror = () => {
+                    addTestResult('Google Maps API 脚本加载失败', false);
+                    resolve(false);
+                };
+                
+                document.head.appendChild(script);
+            });
+        }
+        
+        // 测试2: 初始化地图
+        function testMapInit() {
+            try {
+                const map = new google.maps.Map(document.getElementById('map'), {
+                    center: { lat: 39.9042, lng: 116.4074 }, // 北京
+                    zoom: 10,
+                    mapId: MAP_ID
+                });
+                
+                addTestResult('地图初始化成功');
+                
+                // 添加标记测试
+                const marker = new google.maps.Marker({
+                    position: { lat: 39.9042, lng: 116.4074 },
+                    map: map,
+                    title: '测试标记'
+                });
+                
+                addTestResult('地图标记添加成功');
+                return true;
+            } catch (error) {
+                addTestResult(`地图初始化失败: ${error.message}`, false);
+                return false;
+            }
+        }
+        
+        // 主测试流程
+        async function runTests() {
+            try {
+                updateStatus('🔄 正在加载 Google Maps API...', 'info');
+                
+                const apiLoaded = await testAPILoad();
+                
+                if (apiLoaded && typeof google !== 'undefined') {
+                    updateStatus('🔄 正在初始化地图...', 'info');
+                    
+                    // 等待API完全加载
+                    setTimeout(() => {
+                        const mapInitialized = testMapInit();
+                        
+                        if (mapInitialized) {
+                            updateStatus('🎉 Google Maps API 测试成功！所有功能正常工作。', 'success');
+                        } else {
+                            updateStatus('⚠️ API加载成功，但地图初始化失败。', 'error');
+                        }
+                    }, 1000);
+                } else {
+                    updateStatus('❌ Google Maps API 加载失败。请检查网络连接和API密钥。', 'error');
+                }
+            } catch (error) {
+                updateStatus(`❌ 测试过程中发生错误: ${error.message}`, 'error');
+                addTestResult(`测试异常: ${error.message}`, false);
+            }
+        }
+        
+        // 页面加载完成后开始测试
+        document.addEventListener('DOMContentLoaded', runTests);
+    </script>
+</body>
+</html>

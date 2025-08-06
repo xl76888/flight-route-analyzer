@@ -1,0 +1,61 @@
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Streamlit 3D地图修复测试</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .test-section { margin: 20px 0; padding: 20px; border: 1px solid #ddd; border-radius: 8px; }
+        .success { background: #d4edda; border-color: #c3e6cb; }
+        .warning { background: #fff3cd; border-color: #ffeaa7; }
+        .error { background: #f8d7da; border-color: #f5c6cb; }
+        iframe { width: 100%; height: 600px; border: 1px solid #ccc; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Streamlit 3D地图修复测试</h1>
+        
+        <div class="test-section success">
+            <h2>✅ 修复内容</h2>
+            <ul>
+                <li>修复了map3d_component.html中的API加载逻辑</li>
+                <li>优化了错误处理和状态显示</li>
+                <li>改进了地图初始化流程</li>
+                <li>添加了详细的调试信息</li>
+            </ul>
+        </div>
+        
+        <div class="test-section warning">
+            <h2>⚠️ 测试说明</h2>
+            <p>修复完成后，请按以下步骤测试：</p>
+            <ol>
+                <li>重启Streamlit应用</li>
+                <li>上传航线数据文件</li>
+                <li>在侧边栏选择"3D地图"</li>
+                <li>观察地图是否正常加载</li>
+            </ol>
+        </div>
+        
+        <div class="test-section">
+            <h2>🌐 3D地图组件测试</h2>
+            <p>以下是修复后的3D地图组件预览：</p>
+            <iframe src="file:///D:/flight_tool/components/map3d/map3d_component.html"></iframe>
+        </div>
+        
+        <div class="test-section">
+            <h2>📋 故障排查</h2>
+            <p>如果3D地图仍无法加载，请检查：</p>
+            <ul>
+                <li>✅ Google Maps API密钥是否正确配置</li>
+                <li>✅ 网络连接是否正常（需要访问Google服务）</li>
+                <li>✅ 浏览器是否支持WebGL</li>
+                <li>✅ API配额是否充足</li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>
